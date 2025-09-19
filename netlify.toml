@@ -8,3 +8,6 @@
 
 [functions]
   node_bundler = "esbuild"
+
+  [[plugins]]
+package = "netlify-plugin-inngest"
