@@ -1,11 +1,14 @@
 [build]
   command = "pnpm install --frozen-lockfile && pnpm build"
   publish  = ".next"
+  functions = "netlify/functions"   # ensure Netlify uses your functions dir
 
 [build.environment]
   NODE_VERSION = "20"
+  PNPM_VERSION = "10.16.1"
+  NETLIFY_BUILD_DEBUG = "true"
 
-# Next.js adapter
+# Next.js adapter (must be present for Next 14 on Netlify)
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
@@ -13,10 +16,11 @@
 [[plugins]]
   package = "netlify-plugin-inngest"
   [plugins.inputs]
-    # Don't hardcode host; Netlify sets it per deploy (prod & previews).
+    # Do NOT hardcode host; Netlify sets it per deploy (prod & previews).
     path = "/api/inngest"
 
 [functions]
+  directory = "netlify/functions"
   node_bundler = "esbuild"
 
 # CORS per environment (optional; your API should also enforce)
