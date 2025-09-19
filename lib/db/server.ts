@@ -1,3 +1,4 @@
+// lib/db/server.ts
 import { createClient } from "@supabase/supabase-js";
 
 const url = process.env.SUPABASE_URL!;
@@ -11,3 +12,5 @@ export const supabaseAdmin = createClient(url, serviceRoleKey, {
   auth: { persistSession: false },
 });
 
+// TEMP compat export for older imports
+export { supabaseAdmin as sbAdmin };
