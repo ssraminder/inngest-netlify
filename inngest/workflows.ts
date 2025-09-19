@@ -1,5 +1,4 @@
 // inngest/workflows.ts
-import type { InngestFunction } from "inngest";
 import { inngest } from "../lib/inngest/client";
 import { sbAdmin } from "../lib/db/server";
 
@@ -78,4 +77,4 @@ export const quoteCreatedPrepareJobs = inngest.createFunction(
   }
 );
 
-export const functions: InngestFunction[] = [quoteCreatedPrepareJobs];
+export const functions = [quoteCreatedPrepareJobs];
