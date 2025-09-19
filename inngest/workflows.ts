@@ -6,8 +6,8 @@ import { sbAdmin } from "../lib/db/server";
 type QuoteCreatedEvent = {
   name: "quote/created";
   data: {
-    quoteId: string | number; // matches your quotes PK type
-    files: Array<{ id: string; gcsUri: string; filename: string; bytes?: number; mime?: string }>;
+    quoteId: string | number; // integer in your DB is fine
+    files: Array<{ id?: string; gcsUri?: string; filename?: string; bytes?: number; mime?: string }>;
   };
 };
 
@@ -18,52 +18,46 @@ export const quoteCreatedPrepareJobs = inngest.createFunction(
     const { quoteId, files } = (event as QuoteCreatedEvent).data;
     const supabase = sbAdmin();
 
-    // 1) Insert quote_files if your API didn't already (NO-OP if you already insert them)
-    //    If your API already fills quote_files, skip this block.
+    // (A) Ensure quote_files exist if your API didn’t already insert them (safe no-op if they exist)
     await step.run("ensure-quote-files", async () => {
       if (!files?.length) return;
-      const rows = files.map((f) => ({
-        quote_id: quoteId,
-        gcs_uri: f.gcsUri,
-        filename: f.filename,
-        bytes: f.bytes ?? null,
-        mime: f.mime ?? null,
-        status: "uploaded",
-      }));
-      // Try insert; ignore duplicates (you may already have them)
-      const { error } = await supabase.from("quote_files").insert(rows).select().maybeSingle();
-      if (error && !String(error.message).includes("duplicate")) {
-        // Not fatal if they already exist; otherwise throw
-        throw error;
-      }
-    });
-
-    // 2) Queue OCR jobs (one per file) — idempotent on file_id
-    await step.run("queue-ocr-jobs", async () => {
-      if (!files?.length) return;
-      // fetch file ids from DB to ensure we have the server-created UUIDs if needed
-      const { data: dbFiles, error: selErr } = await supabase
-        .from("quote_files")
-        .select("id, filename")
-        .eq("quote_id", quoteId);
-      if (selErr) throw selErr;
-
-      const rows =
-        dbFiles?.map((f) => ({
+      const rows = files
+        .filter((f) => f.gcsUri && f.filename)
+        .map((f) => ({
           quote_id: quoteId,
-          file_id: f.id,
-          status: "queued",
-        })) ?? [];
-
-      if (rows.length) {
-        const { error } = await supabase
-          .from("ocr_jobs")
-          .upsert(rows, { onConflict: "file_id", ignoreDuplicates: true });
-        if (error) throw error;
-      }
+          gcs_uri: f.gcsUri!,
+          filename: f.filename!,
+          bytes: f.bytes ?? null,
+          mime: f.mime ?? null,
+          status: "uploaded",
+        }));
+      if (!rows.length) return;
+      const { error } = await supabase.from("quote_files").insert(rows);
+      if (error && !String(error.message).includes("duplicate")) throw error;
     });
 
-    // 3) Ensure a single GLM job per quote
+    // (B) Load files for this quote (works whether inserted above or earlier in your API)
+    const { data: dbFiles, error: selErr } = await supabase
+      .from("quote_files")
+      .select("id, filename")
+      .eq("quote_id", quoteId);
+    if (selErr) throw selErr;
+
+    // (C) Queue OCR jobs (idempotent on file_id)
+    await step.run("queue-ocr-jobs", async () => {
+      if (!dbFiles?.length) return;
+      const rows = dbFiles.map((f) => ({
+        quote_id: quoteId,
+        file_id: f.id,
+        status: "queued",
+      }));
+      const { error } = await supabase
+        .from("ocr_jobs")
+        .upsert(rows, { onConflict: "file_id", ignoreDuplicates: true });
+      if (error) throw error;
+    });
+
+    // (D) Ensure one GLM job per quote
     await step.run("queue-glm-job", async () => {
       const { data: existing, error: checkErr } = await supabase
         .from("glm_jobs")
@@ -73,12 +67,14 @@ export const quoteCreatedPrepareJobs = inngest.createFunction(
         .maybeSingle();
       if (checkErr) throw checkErr;
       if (!existing) {
-        const { error: insErr } = await supabase.from("glm_jobs").insert({ quote_id: quoteId, status: "queued" });
+        const { error: insErr } = await supabase
+          .from("glm_jobs")
+          .insert({ quote_id: quoteId, status: "queued" });
         if (insErr) throw insErr;
       }
     });
 
-    return { ok: true, quoteId, files: files?.length ?? 0 };
+    return { ok: true, quoteId, fileCount: dbFiles?.length ?? 0 };
   }
 );
 
