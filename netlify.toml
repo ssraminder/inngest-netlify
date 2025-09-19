@@ -9,8 +9,16 @@
 [functions]
   node_bundler = "esbuild"
 
-  [[plugins]]
-package = "netlify-plugin-inngest"
+# (Optional but nice)
+[context.production.environment]
+  CORS_ALLOWED_ORIGINS = "*"
+
+[context.deploy-preview.environment]
+  CORS_ALLOWED_ORIGINS = "*"
+
+[context.branch-deploy.environment]
+  CORS_ALLOWED_ORIGINS = "*"
+
 
 [[plugins]]
 package = "netlify-plugin-inngest"
