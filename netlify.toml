@@ -9,9 +9,9 @@
 [functions]
   node_bundler = "esbuild"
 
-# (Optional but nice)
+# CORS per environment (optional; your API should also handle CORS)
 [context.production.environment]
-  CORS_ALLOWED_ORIGINS = "*"
+  CORS_ALLOWED_ORIGINS = "https://cethos.com,https://*.cethos.com,https://*.vercel.app"
 
 [context.deploy-preview.environment]
   CORS_ALLOWED_ORIGINS = "*"
@@ -19,10 +19,8 @@
 [context.branch-deploy.environment]
   CORS_ALLOWED_ORIGINS = "*"
 
-
 [[plugins]]
 package = "netlify-plugin-inngest"
-
   [plugins.inputs]
     host = "https://cethosv3.netlify.app"
-    path = "/api/inngest"
+    path = "/.netlify/functions/inngest"
