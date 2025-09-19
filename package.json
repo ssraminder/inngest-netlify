@@ -7,12 +7,13 @@
     "start": "next start"
   },
   "dependencies": {
-    "@google-cloud/storage": "^7.11.0",
-    "@inngest/netlify": "^2.4.0",
-    "@netlify/plugin-nextjs": "^5.7.1",
-    "inngest": "^3.17.0",
+    "inngest": "^3.40.0",
     "next": "14.2.5",
     "react": "18.2.0",
     "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "netlify-plugin-inngest": "^1.0.1",
+    "@netlify/plugin-nextjs": "^5.7.1"
   }
 }
