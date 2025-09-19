@@ -10,3 +10,4 @@ if (!url || !serviceRoleKey) {
 export const supabaseAdmin = createClient(url, serviceRoleKey, {
   auth: { persistSession: false },
 });
+
