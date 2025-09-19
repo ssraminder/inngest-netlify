@@ -3,9 +3,9 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextResponse } from "next/server";
-// was: "../../../../lib/db/server" (4 up) — that points to app/lib/..., which doesn't exist
 import { sbAdmin } from "../../../../../lib/db/server";
 import { inngest } from "../../../../../lib/inngest/client";
+
 
 
 export async function POST(_: Request, { params }: { params: { id: string } }) {
