@@ -1,14 +1,16 @@
 {
   "name": "cethos-quote-platform",
+  "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@6.0",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
   },
-{
-  "packageManager": "pnpm@6.0"
-},
   "dependencies": {
     "inngest": "^3.40.0",
     "next": "14.2.5",
@@ -16,7 +18,7 @@
     "react-dom": "18.2.0"
   },
   "devDependencies": {
-    "netlify-plugin-inngest": "^1.0.1",
-    "@netlify/plugin-nextjs": "^5.7.1"
+    "@netlify/plugin-nextjs": "^5.7.1",
+    "netlify-plugin-inngest": "^1.0.1"
   }
 }
