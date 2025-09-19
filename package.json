@@ -15,7 +15,8 @@
     "inngest": "^3.40.0",
     "next": "14.2.5",
     "react": "18.2.0",
-    "react-dom": "18.2.0"
+    "react-dom": "18.2.0",
+    "@supabase/supabase-js": "^2.46.1"
   },
   "devDependencies": {
     "@netlify/plugin-nextjs": "^5.7.1",
