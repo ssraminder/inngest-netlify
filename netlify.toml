@@ -1,15 +1,25 @@
 [build]
   command = "pnpm install --frozen-lockfile && pnpm build"
   publish  = ".next"
-  node_version = "20"
 
+[build.environment]
+  NODE_VERSION = "20"
+
+# Next.js adapter
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Inngest build plugin — auto-registers your /api/inngest endpoint
+[[plugins]]
+  package = "netlify-plugin-inngest"
+  [plugins.inputs]
+    # Don't hardcode host; Netlify sets it per deploy (prod & previews).
+    path = "/api/inngest"
 
 [functions]
   node_bundler = "esbuild"
 
-# CORS per environment (optional; your API should also handle CORS)
+# CORS per environment (optional; your API should also enforce)
 [context.production.environment]
   CORS_ALLOWED_ORIGINS = "https://cethos.com,https://*.cethos.com,https://*.vercel.app"
 
@@ -18,9 +28,3 @@
 
 [context.branch-deploy.environment]
   CORS_ALLOWED_ORIGINS = "*"
-
-[[plugins]]
-package = "netlify-plugin-inngest"
-  [plugins.inputs]
-    host = "https://cethosv3.netlify.app"
-    path = "/.netlify/functions/inngest"
