@@ -11,3 +11,10 @@
 
   [[plugins]]
 package = "netlify-plugin-inngest"
+
+[[plugins]]
+package = "netlify-plugin-inngest"
+
+  [plugins.inputs]
+    host = "https://cethosv3.netlify.app"
+    path = "/api/inngest"
