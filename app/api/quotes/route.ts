@@ -1,7 +1,7 @@
 // app/api/quotes/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { inngest } from "@/lib/inngest/client";
+import { inngest } from "../../../lib/inngest/client";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
