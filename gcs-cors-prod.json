@@ -1,0 +1,17 @@
+[
+  {
+    "origin": [
+      "https://cethos.com",
+      "https://*.cethos.com",
+      "https://*.netlify.app"  // optional: if you want deploy-preview to work with the prod bucket
+    ],
+    "method": ["GET", "PUT", "HEAD", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Authorization",
+      "x-goog-meta-*",
+      "x-goog-resumable"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]
