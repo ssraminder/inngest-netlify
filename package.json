@@ -12,14 +12,18 @@
     "start": "next start"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.46.1",
     "inngest": "^3.40.0",
     "next": "14.2.5",
     "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "@supabase/supabase-js": "^2.46.1"
+    "react-dom": "18.2.0"
   },
   "devDependencies": {
     "@netlify/plugin-nextjs": "^5.7.1",
-    "netlify-plugin-inngest": "^1.0.1"
+    "netlify-plugin-inngest": "^1.0.1",
+    "typescript": "^5.6.3",
+    "@types/node": "^20.14.11",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0"
   }
 }
