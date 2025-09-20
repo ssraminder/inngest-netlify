@@ -108,8 +108,7 @@ const policy = await step.run("load-policy", () => {
     ...partialPolicy,
   } as any;
 });
-certifications: partialPolicy.certifications || {},
-shipping: partialPolicy.shipping || {},
+
 // You may need to add 2 more properties based on your CompletePricingPolicy interface
 // Look for other required properties in your type definition and add them here
 …partialPolicy,
