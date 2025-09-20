@@ -2,7 +2,7 @@
 import { inngest } from "@/inngest/client";
 
 export const echoFilesUploaded = inngest.createFunction(
-  { id: "ocr-document" },            // <-- set to the stable ID Inngest expects
+  { id: "echo-files-uploaded" },            // <-- set to the stable ID Inngest expects
   { event: "files/uploaded" },
   async ({ event }) => {
     console.log("files/uploaded payload:", event.data);
