@@ -1,4 +1,4 @@
-import { inngest } from "../client";
+import { inngest } from "@/lib/inngest/client";
 
 export const echoFilesUploaded = inngest.createFunction(
   { id: "echo-files-uploaded" },

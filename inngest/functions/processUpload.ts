@@ -1,4 +1,4 @@
-import { inngest } from "../client";
+import { inngest } from "@/lib/inngest/client";
 
 export const processUpload = inngest.createFunction(
   { id: "process-upload" },

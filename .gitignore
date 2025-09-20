@@ -1,1 +1,11 @@
 node_modules/
+
+# Build output
+.next/
+dist/
+out/
+
+# Build output
+.next/
+dist/
+out/
