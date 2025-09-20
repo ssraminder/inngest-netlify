@@ -1,64 +1,146 @@
 // lib/calc.ts
-import type { PricingPolicy } from "./policy";
 
-export function quarterPage(raw: number, tol=0.20) {
-  const base = Math.max(0, raw);
-  const frac = base - Math.trunc(base);
-  const nearest = Math.round(base / 0.25) * 0.25;
-  const ceilNext = Math.ceil(base / 0.25) * 0.25;
-  return frac <= tol ? (nearest || 0.25) : (ceilNext || 0.25);
+import type { CompletePricingPolicy } from "./policy";
+
+/**
+ * Round a floating page count to quarter-pages with a threshold.
+ * Example: if roundingThreshold = 0.5, 1.49 -> 1.25, 1.50 -> 1.5, etc.
+ * We clamp to min 1 quarter page (0.25) if value > 0.
+ */
+export function quarterPage(value: number, roundingThreshold: number): number {
+  if (!isFinite(value) || value <= 0) return 0;
+  // Convert to quarters
+  const quarters = value * 4;
+  // Split integer + fractional quarters
+  const whole = Math.floor(quarters);
+  const frac = quarters - whole;
+  // If the fractional part is at or above threshold, round up to next quarter
+  const bump = frac >= roundingThreshold ? 1 : 0;
+  const q = whole + bump;
+  return q / 4;
 }
 
-export function ceilTo5(x:number) {
-  return Math.ceil(x/5)*5;
+/**
+ * Round up to the next multiple of 5 (used for labor rounding to neat prices).
+ */
+export function ceilTo5(n: number): number {
+  if (!isFinite(n)) return 0;
+  return Math.ceil(n / 5) * 5;
 }
 
-export function pickTierMultiplier(policy: PricingPolicy, declaredLangs: string[], detectedLangs: string[]): number {
-  const all = new Set<string>([...declaredLangs, ...detectedLangs]);
-  const arr = Array.from(all);
-  const tiers = arr.map(l => policy.languageTierMap[l] || "default");
-  const maxTier = tiers.reduce((acc, t) => {
-    const order = { default:0, D:1, C:2, A:3, B:4 }; // B considered “harder” than A here; adjust if needed
-    return order[t] > order[acc] ? t : acc;
-  }, "default" as keyof typeof policy.tiers);
-  const mult = policy.tiers[maxTier];
+/**
+ * Compute a language multiplier from policy + requested + detected languages.
+ * - languageTierMap maps languages to tier keys ("A" | "B" | "C" | "D" | "default")
+ * - tiers maps tier keys to numeric multipliers (e.g., A: 1.3, default: 1)
+ * - extraLanguagePct applies once per extra language beyond the first.
+ */
+export function pickTierMultiplier(
+  policy: CompletePricingPolicy,
+  requested: string[] = [],
+  detected: string[] = []
+): number {
+  const uniq = Array.from(new Set([...(requested || []), ...(detected || [])]))
+    .map((l) => (l || "").trim())
+    .filter(Boolean);
 
-  // extra languages beyond first
-  const extraCount = Math.max(0, arr.length - 1);
-  const extraMult = (1 + policy.extraLanguagePct) ** extraCount;
+  const tierMap = policy.languageTierMap || {};
+  const tiers = policy.tiers || {};
 
-  return mult * extraMult;
+  const DEFAULT_KEY = "default";
+  const baseTierKey = (tierMap as any)[DEFAULT_KEY] ? (tierMap as any)[DEFAULT_KEY] : DEFAULT_KEY;
+  const defaultMult =
+    (tiers as any)[baseTierKey] ?? (tiers as any)[DEFAULT_KEY] ?? 1;
+
+  // Pick the **max** multiplier across languages to stay conservative
+  let maxMult = defaultMult;
+  for (const lang of uniq) {
+    const key = (tierMap as any)[lang] ?? DEFAULT_KEY;
+    const mult = (tiers as any)[key] ?? (tiers as any)[DEFAULT_KEY] ?? 1;
+    if (mult > maxMult) maxMult = mult;
+  }
+
+  // Extra language percentage uplift beyond the first language
+  const extraCount = Math.max(uniq.length - 1, 0);
+  const extraPct = policy.extraLanguagePct ?? 0; // % per extra language
+  const extraFactor = extraCount > 0 ? 1 + (extraPct * extraCount) / 100 : 1;
+
+  return maxMult * extraFactor;
 }
 
-export function rushMarkup({
-  policy, tier, laborRounded, certFee, shipFee,
-  docType, countryOfIssue
-}: {
-  policy: PricingPolicy;
-  tier: "rush_1bd"|"same_day"|null|undefined;
+/**
+ * Rush markup calculator.
+ * Inputs:
+ * - policy.rush[tier] may define:
+ *   - enabled: boolean
+ *   - percent: number (e.g., 20 for +20%)
+ *   - docTypeOverrides: Record<docType, percent>
+ *   - countryOverrides: Record<countryCodeOrName, percent>
+ *   - minSubtotal: number (ensure at least this subtotal before applying percent)
+ *
+ * Returns subtotal (laborRounded + fees, then rush applied if enabled) and the
+ * applied rush info or null when not applied.
+ */
+export type RushTier = "rush_1bd" | "same_day";
+
+export type RushApplied =
+  | { tier: RushTier; percent: number }
+  | null;
+
+export function rushMarkup(args: {
+  policy: CompletePricingPolicy;
+  tier: RushTier | null | undefined;
   laborRounded: number;
   certFee: number;
   shipFee: number;
-  docType?: string|null;
-  countryOfIssue?: string|null;
-}) {
-  if (!tier) return { subtotal: laborRounded + certFee + shipFee, applied: null as const };
+  docType?: string | null;
+  countryOfIssue?: string | null;
+}): { subtotal: number; applied: RushApplied } {
+  const {
+    policy,
+    tier,
+    laborRounded,
+    certFee,
+    shipFee,
+    docType,
+    countryOfIssue,
+  } = args;
 
-  const cfg = policy.rush[tier];
-  if (!cfg?.enabled) return { subtotal: laborRounded + certFee + shipFee, applied: null as const };
+  const baseSubtotal = (laborRounded || 0) + (certFee || 0) + (shipFee || 0);
 
-  const subtotalBase = laborRounded + certFee + shipFee;
-  const calculatedBase = cfg.apply_to === "labor" ? laborRounded : subtotalBase;
-
-  let base = calculatedBase;
-  if (cfg.basis === "preset" && tier === "same_day") {
-    // eligibility check: doc type + country + (max_pages is enforced upstream)
-    const entry = policy.rush.same_day.eligibility.find(e => e.doc_type === docType && e.country_of_issue === countryOfIssue);
-    if (entry?.preset_base != null) {
-      base = entry.preset_base;
-    }
+  if (!tier) {
+    return { subtotal: baseSubtotal, applied: null };
   }
 
-  const subtotal = Math.round(base * (1 + cfg.percent) * 100) / 100;
-  return { subtotal, applied: tier };
+  const rushCfg = (policy as any).rush?.[tier];
+  if (!rushCfg || !rushCfg.enabled) {
+    return { subtotal: baseSubtotal, applied: null };
+  }
+
+  // Determine percent with precedence: docType override -> country override -> default percent
+  const docPct =
+    docType && rushCfg.docTypeOverrides
+      ? rushCfg.docTypeOverrides[docType]
+      : undefined;
+
+  const cntryKey = (countryOfIssue || "").trim();
+  const countryPct =
+    cntryKey && rushCfg.countryOverrides
+      ? rushCfg.countryOverrides[cntryKey]
+      : undefined;
+
+  const percent =
+    (isFinite(docPct as number) ? (docPct as number) :
+     isFinite(countryPct as number) ? (countryPct as number) :
+     (rushCfg.percent ?? 0)) || 0;
+
+  // Optional floor before applying rush percent
+  const preSubtotal =
+    typeof rushCfg.minSubtotal === "number" && rushCfg.minSubtotal > baseSubtotal
+      ? rushCfg.minSubtotal
+      : baseSubtotal;
+
+  const subtotal = Math.round(preSubtotal * (1 + percent / 100) * 100) / 100;
+
+  const applied: RushApplied = { tier, percent };
+  return { subtotal, applied };
 }
