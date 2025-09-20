@@ -4,8 +4,9 @@ import { sbAdmin } from "./db/server";
 export type RushBasis = "calculated" | "preset";
 export type RushApplyTo = "labor" | "subtotal";
 
-export type PricingPolicy = {
-  currency?: "CAD" | "USD"; // <-- Changed to optional
+// This is the source of truth for a COMPLETE policy object.
+export type CompletePricingPolicy = {
+  currency: "CAD" | "USD";
   pageWordDivisor: number;
   roundingThreshold: number;
   baseRates: Record<string, number>;
@@ -25,7 +26,7 @@ export type PricingPolicy = {
     same_day: {
       enabled: boolean;
       percent: number;
-      basis: RushBasis;
+      basis: RushAway;
       apply_to: RushApplyTo;
       cutoff_local_time: string;
       timezone: string;
@@ -35,7 +36,10 @@ export type PricingPolicy = {
   };
 };
 
-const DEFAULTS: PricingPolicy = {
+// This type allows for an incomplete policy, as might be returned from the database.
+export type PricingPolicy = Partial<CompletePricingPolicy>;
+
+const DEFAULTS: CompletePricingPolicy = {
   currency: "CAD",
   pageWordDivisor: Number(process.env.PAGE_WORD_DIVISOR || 225),
   roundingThreshold: Number(process.env.ROUNDING_THRESHOLD || 0.20),
@@ -74,7 +78,7 @@ const DEFAULTS: PricingPolicy = {
   }
 };
 
-export async function loadPolicy(): Promise<PricingPolicy> {
+export async function loadPolicy(): Promise<CompletePricingPolicy> {
   const supabase = sbAdmin();
   const { data, error } = await supabase
     .from("AppSettings")
@@ -83,7 +87,9 @@ export async function loadPolicy(): Promise<PricingPolicy> {
     .maybeSingle();
 
   if (!error && data?.settings) {
-    return { ...DEFAULTS, ...(data.settings as Partial<PricingPolicy>) };
+    const dbSettings = data.settings as Partial<PricingPolicy>;
+    // Merge defaults with DB settings, ensuring the final object is complete.
+    return { ...DEFAULTS, ...dbSettings };
   }
 
   return DEFAULTS;
