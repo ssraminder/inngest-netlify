@@ -6,7 +6,7 @@ import {
   echoFilesUploaded,
   processUpload,
   quoteCreatedPrepareJobs,
-} from "@/inngest/functions";
+} from "../../../../inngest/functions";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
