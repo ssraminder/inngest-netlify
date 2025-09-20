@@ -1,84 +1,99 @@
-// lib/policy.ts
-import { sbAdmin } from "./db/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type RushBasis = "calculated" | "preset";
-export type RushApplyTo = "labor" | "subtotal";
+export type Currency = "CAD" | "USD";
 
-export type PricingPolicy = {
-  currency: "CAD" | "USD";
-  pageWordDivisor: number;        // default 225
-  roundingThreshold: number;      // default 0.20  (<= 0.20 → nearest 0.25, else ceil to 0.25)
-  baseRates: Record<string, number>; // intended_use → rate per page
-  tiers: Record<string, number>;  // A/B/C/D/default → multiplier
-  languageTierMap: Record<string, "A"|"B"|"C"|"D"|"default">; // languagename → tier
-  extraLanguagePct: number;       // 0.05 (i.e., +5% per extra)
-  complexity: { Easy:number; Medium:number; Hard:number }; // 1.00/1.15/1.30
-  certifications: Record<string, number>; // Standard/PPTC/Notarization/custom...
-  shipping: { online:number; canadapost:number; pickup_calg:number; express_post:number };
+export interface PricingPolicy {
+  currency: Currency;
+  pageWordDivisor: number;
+  roundingThreshold: number;
+
+  baseRates: Record<string, number>;
+  tiers: Record<"A" | "B" | "C" | "D" | "default", number>;
+  languageTierMap: Record<string, "A" | "B" | "C" | "D" | "default">;
+
+  complexity: Record<"Easy" | "Medium" | "Hard", number>;
+
+  certifications: Record<string, number>;
+  shipping: Record<string, number>;
+
   tax: {
-    hst: Record<"NB"|"NL"|"NS"|"ON"|"PE", number>;
-    gstOnly: Record<"AB"|"NT"|"NU"|"YT", number>;
+    hst: Record<string, number | boolean>;
+    gstOnly: Record<string, boolean>;
     defaultGST: number;
   };
+
   rush: {
-    rush_1bd: { enabled:boolean; percent:number; basis:RushBasis; apply_to:RushApplyTo };
+    percent: number;
     same_day: {
-      enabled:boolean; percent:number; basis:RushBasis; apply_to:RushApplyTo;
-      cutoff_local_time:string; timezone:string; max_pages:number;
-      eligibility: Array<{ doc_type:string; country_of_issue:string; preset_base?:number }>;
+      eligibility: Array<{
+        doc_type: string;
+        country_of_issue?: string;
+        countryOfIssue?: string;
+        preset_base?: number;
+      }>;
     };
   };
+
+  extraLanguagePct: number;
+}
+
+// Safe defaults to satisfy type-checking even if DB/env has gaps
+export const defaultPolicy: PricingPolicy = {
+  currency: (process.env.CURRENCY as Currency) || "CAD",
+  pageWordDivisor: Number(process.env.PAGE_WORD_DIVISOR ?? 300),
+  roundingThreshold: Number(process.env.ROUNDING_THRESHOLD ?? 0.4),
+
+  baseRates: { default: Number(process.env.BASE_RATE_CAD ?? 0.18) },
+  tiers: { A: 1.0, B: 1.1, C: 1.25, D: 1.5, default: 1.0 },
+  languageTierMap: {},
+
+  complexity: { Easy: 1.0, Medium: 1.1, Hard: 1.25 },
+
+  certifications: {},
+
+  shipping: {},
+
+  tax: {
+    hst: {},
+    gstOnly: {},
+    defaultGST: Number(process.env.DEFAULT_GST ?? 0.05),
+  },
+
+  rush: {
+    percent: Number(process.env.RUSH_PERCENT ?? 0.25),
+    same_day: { eligibility: [] },
+  },
+
+  extraLanguagePct: Number(process.env.EXTRA_LANGUAGE_PCT ?? 0.1),
 };
 
-const DEFAULTS: PricingPolicy = {
-  currency: "CAD",
-  pageWordDivisor: Number(process.env.PAGE_WORD_DIVISOR || 225),
-  roundingThreshold: Number(process.env.ROUNDING_THRESHOLD || 0.20),
-  baseRates: {
-    general: Number(process.env.BASE_RATE_CAD || 65),
-    legal: 80, immigration: 75, academic: 70, insurance: 70
-  },
-  tiers: { A: 1.20, B: 1.35, C: 1.10, D: 1.05, default: 1.00 },
-  languageTierMap: {
-    Punjabi:"A", Hindi:"A", Marathi:"A",
-    Arabic:"B", Chinese:"B", Thai:"B",
-    French:"C", German:"C", Italian:"C", Greek:"C",
-    Norwegian:"D", Swedish:"D", Finnish:"D", Dutch:"D",
-    English:"default"
-  },
-  extraLanguagePct: 0.05,
-  complexity: { Easy:1.00, Medium:1.15, Hard:1.30 },
-  certifications: { Standard:0, "PPTC Document":35, Notarization:50 },
-  shipping: { online:0, canadapost:5, pickup_calg:0, express_post:25 },
-  tax: {
-    hst: { NB:0.15, NL:0.15, NS:0.14, ON:0.13, PE:0.15 },
-    gstOnly: { AB:0.05, NT:0.05, NU:0.05, YT:0.05 },
-    defaultGST: 0.05
-  },
-  rush: {
-    rush_1bd: { enabled:true, percent:0.30, basis:"calculated", apply_to:"subtotal" },
-    same_day: {
-      enabled:true, percent:0.50, basis:"preset", apply_to:"subtotal",
-      cutoff_local_time:"13:00", timezone:"America/Edmonton", max_pages:1,
-      eligibility: [
-        { doc_type:"Driver License", country_of_issue:"IN", preset_base:65 },
-        { doc_type:"Driver License", country_of_issue:"CL", preset_base:65 },
-        { doc_type:"Driver License", country_of_issue:"FR", preset_base:65 }
-      ]
+// Deep-ish merge that preserves nested objects
+function mergeDeep<T extends Record<string, any>>(base: T, patch: Partial<T>): T {
+  const out: any = { ...base };
+  for (const k of Object.keys(patch || {})) {
+    const v = (patch as any)[k];
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      out[k] = mergeDeep(base[k] ?? {}, v);
+    } else if (v !== undefined) {
+      out[k] = v;
     }
   }
-};
+  return out;
+}
 
-export async function loadPolicy(): Promise<PricingPolicy> {
-  // Preferred: AppSettings with key 'pricing_policy_v1'
-  const supabase = sbAdmin();
-  const { data, error } = await supabase
-    .from("AppSettings")
-    .select("settings")
-    .eq("key", "pricing_policy_v1")
-    .maybeSingle();
-  if (!error && data?.settings) {
-    return { ...DEFAULTS, ...data.settings };
+export function ensurePolicy(input?: Partial<PricingPolicy>): PricingPolicy {
+  return mergeDeep(defaultPolicy, input ?? {});
+}
+
+// Keep call sites flexible: accept any args and return Partial
+export async function loadPolicy(..._args: any[]): Promise<Partial<PricingPolicy>> {
+  // Prefer JSON injected at build time if present
+  try {
+    const fromJson = process.env.PRICING_POLICY_JSON
+      ? JSON.parse(process.env.PRICING_POLICY_JSON)
+      : {};
+    return fromJson;
+  } catch {
+    return {};
   }
-  return DEFAULTS;
 }
