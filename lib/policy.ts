@@ -77,8 +77,18 @@ export async function loadPolicy(): Promise<PricingPolicy> {
     .select("settings")
     .eq("key", "pricing_policy_v1")
     .maybeSingle();
+
   if (!error && data?.settings) {
-    return { ...DEFAULTS, ...data.settings };
+    const dbSettings = data.settings as Partial<PricingPolicy>;
+
+    // If currency is null or undefined in the database, we want to ignore it
+    // and use the default value.
+    if (!dbSettings.currency) {
+      delete dbSettings.currency;
+    }
+
+    return { ...DEFAULTS, ...dbSettings };
   }
+
   return DEFAULTS;
 }
