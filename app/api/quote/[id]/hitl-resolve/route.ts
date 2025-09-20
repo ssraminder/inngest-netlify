@@ -3,8 +3,10 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextResponse } from "next/server";
-import { sbAdmin } from "../../../../lib/db/server";
-import { inngest } from "../../../../lib/inngest/client";
+import { sbAdmin } from "../../../../../lib/db/server";
+import { inngest } from "../../../../../lib/inngest/client";
+
+
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const quoteId = Number(params.id);

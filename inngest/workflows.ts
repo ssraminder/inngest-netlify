@@ -251,7 +251,8 @@ export const geminiAnalyze = inngest.createFunction(
             quote_id,
             file_id: qp?.[0]?.file_token ?? null, // if you want to keep track per-file; else null
             page_index: r.index,
-            doc_type: ((r as any).docType) ?? result.doc_type ?? null,
+doc_type: (r as any)?.docType ?? result.doc_type ?? null,
+
             complexity: r.complexity,
             language_primary: null,
             language_primary_pct: null,
