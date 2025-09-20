@@ -1,4 +1,4 @@
-import { inngest } from "../client";
+import { inngest } from "@/lib/inngest/client";
 
 export const quoteCreatedPrepareJobs = inngest.createFunction(
   { id: "quote-created-prepare-jobs" },

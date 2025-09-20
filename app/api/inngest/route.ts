@@ -1,5 +1,5 @@
 import { serve } from "inngest/next";
-import { inngest } from "@/inngest/client";
+import { inngest } from "@/lib/inngest/client";
 
 // If you have an index exporting all functions:
 import {
