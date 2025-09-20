@@ -6,7 +6,7 @@
 
 import { inngest } from "../lib/inngest/client";
 import { sbAdmin } from "../lib/db/server";
-import { loadPolicy } from "../lib/policy";
+import { loadPolicy, PricingPolicy } from "../lib/policy"; // Import PricingPolicy
 import { quarterPage, ceilTo5, pickTierMultiplier, rushMarkup } from "../lib/calc";
 
 // External SDKs (install once: npm i @google-cloud/storage @google-cloud/documentai @google/generative-ai)
@@ -393,7 +393,7 @@ export const computePricing = inngest.createFunction(
     if (!gj || gj.status !== "succeeded") return { skipped: "analysis-not-ready" };
 
     // Policy (from AppSettings or ENV-backed defaults)
-    const policy = await step.run("load-policy", () => loadPolicy());
+    const policy: PricingPolicy = await step.run("load-policy", () => loadPolicy());
 
     // Billable words: if Gemini provided a number, use it; else fallback to sum of quote_pages.word_count
     let words = 0;
