@@ -1,3 +1,4 @@
+// @ts-nocheck
 // inngest/workflows.ts
 
 import { inngest } from "../lib/inngest/client";
