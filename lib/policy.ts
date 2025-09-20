@@ -26,7 +26,7 @@ export type CompletePricingPolicy = {
     same_day: {
       enabled: boolean;
       percent: number;
-      basis: RushAway;
+      basis: RushBasis;
       apply_to: RushApplyTo;
       cutoff_local_time: string;
       timezone: string;
@@ -87,7 +87,7 @@ export async function loadPolicy(): Promise<CompletePricingPolicy> {
     .maybeSingle();
 
   if (!error && data?.settings) {
-    const dbSettings = data.settings as Partial<PricingPolicy>;
+    const dbSettings = data.settings as PricingPolicy;
     // Merge defaults with DB settings, ensuring the final object is complete.
     return { ...DEFAULTS, ...dbSettings };
   }
