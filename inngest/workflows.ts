@@ -2,16 +2,18 @@
 
 import { inngest } from "../lib/inngest/client";
 import { sbAdmin } from "../lib/db/server";
-import { loadPolicy, CompletePricingPolicy } from "../lib/policy";
-import { quarterPage, ceilTo5, pickTierMultiplier, rushMarkup } from "../lib/calc";
-import { Storage } from "@google-cloud/storage";
-import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { loadPolicy } from "../lib/policy";
+import type { CompletePricingPolicy } from "../lib/policy";
+import {
+  quarterPage,
+  ceilTo5,
+  pickTierMultiplier,
+  rushMarkup,
+} from "../lib/calc";
 
 /**
- * ---------- Event data types (aligned to your tables) ----------
+ * ------------ Event data types ------------
  */
-
 type FilesUploaded = {
   name: "files/uploaded";
   data: {
@@ -31,7 +33,7 @@ type OcrComplete = {
     file_id: string;
     page_count: number;
     avg_confidence: number;
-    languages: Record<string, number>; // fixed: add K/V types
+    languages: Record<string, number>;
   };
 };
 
@@ -60,20 +62,59 @@ type QuoteSubmitted = {
     languages: string[];
     billing: {
       country: string;
-      region?: string;
+      region?: string | null;
       currency: "CAD" | "USD";
     };
     options?: {
       rush?: "rush_1bd" | "same_day" | null;
-      certification?: string;
-      shipping?: "online" | "canadapost" | "pickup_calg" | "express_post";
+      certification?: string | null;
+      shipping?: "online" | "canadapost" | "pickup_calg" | "express_post" | null;
     };
   };
 };
 
 /**
- * ---------- 0. Stubs for referenced functions so file compiles ----------
- * Replace with your real implementations when ready.
+ * ------------ Helpers ------------
+ */
+function ensureCompletePolicy(
+  raw: Partial<CompletePricingPolicy> | any
+): CompletePricingPolicy {
+  return {
+    currency: raw?.currency ?? "CAD",
+    pageWordDivisor: raw?.pageWordDivisor ?? 250,
+    roundingThreshold: raw?.roundingThreshold ?? 0.5,
+
+    // ensure general base rate exists
+    baseRates: { general: 25, ...(raw?.baseRates ?? {}) },
+
+    tiers: raw?.tiers ?? {},
+    languageTierMap: raw?.languageTierMap ?? {},
+    extraLanguagePct: raw?.extraLanguagePct ?? 0,
+
+    // CRITICAL: all three keys must exist
+    complexity: {
+      Easy: raw?.complexity?.Easy ?? 1,
+      Medium: raw?.complexity?.Medium ?? 1.2,
+      Hard: raw?.complexity?.Hard ?? 1.5,
+    },
+
+    certifications: raw?.certifications ?? {},
+    shipping: { online: 0, ...(raw?.shipping ?? {}) },
+
+    tax: {
+      defaultGST: raw?.tax?.defaultGST ?? 0.05,
+      gstOnly: { ...(raw?.tax?.gstOnly ?? {}) },
+      hst: { ...(raw?.tax?.hst ?? {}) },
+    },
+
+    // include if used by rushMarkup
+    rush: { ...(raw?.rush ?? {}) },
+  };
+}
+
+/**
+ * ------------ 0) Stubs so file compiles if these are WIP ------------
+ * Replace with real implementations when ready.
  */
 export const ocrDocument = inngest.createFunction(
   { id: "ocr-document" },
@@ -88,110 +129,102 @@ export const geminiAnalyze = inngest.createFunction(
 );
 
 /**
- * ---------- 2.4 Pricing: quote/submitted → compute only after analysis OK (and not HITL) ----------
+ * ------------ 1) Compute Pricing ------------
+ * Trigger: quote/submitted
  */
 export const computePricing = inngest.createFunction(
-  { id: "compute-pricing" },                    // 1) metadata
-  { event: "quote/submitted" },                 // 2) trigger
-  async ({ event, step }) => {                  // 3) handler
-    const { quote_id, intended_use, languages, options } =
+  { id: "compute-pricing" },
+  { event: "quote/submitted" },
+  async ({ event, step, logger }) => {
+    const { quote_id, intended_use, languages, billing, options } =
       (event as any).data as QuoteSubmitted["data"];
 
     const supabase = sbAdmin();
 
-    // If human-in-the-loop, skip pricing
-    const { data: qrec } = await supabase
+    // If HITL, skip automated pricing
+    const { data: qrec, error: qErr } = await supabase
       .from("quotes")
       .select("status")
       .eq("quoteid", quote_id)
       .maybeSingle();
-    if (qrec?.status === "hitl") {
-      return { skipped: "hitl" as const };
-    }
+    if (qErr) logger?.error("quotes.status query error", qErr);
+    if (qrec?.status === "hitl") return { skipped: "hitl" as const };
 
-    // Ensure GLM analysis exists and succeeded
-    const { data: gj } = await supabase
+    // Ensure analysis is ready (if you require it pre-pricing)
+    const { data: gj, error: gjErr } = await supabase
       .from("glm_jobs")
       .select("status")
       .eq("quote_id", quote_id)
       .maybeSingle();
+    if (gjErr) logger?.error("glm_jobs.status query error", gjErr);
     if (!gj || gj.status !== "succeeded") {
       return { skipped: "analysis-not-ready" as const };
     }
 
-    // Load pricing policy with safe defaults to satisfy CompletePricingPolicy
-    const policy = await step.run("load-policy", async (): Promise<CompletePricingPolicy> => {
-      const partial = loadPolicy() as Partial<CompletePricingPolicy>;
+    // Load and normalize pricing policy
+    const policy: CompletePricingPolicy = await step.run(
+      "load-policy",
+      async () => ensureCompletePolicy(await loadPolicy())
+    );
 
-      return {
-        // defaults + partial override
-        currency: partial.currency ?? "CAD",
-        pageWordDivisor: partial.pageWordDivisor ?? 250,
-        roundingThreshold: partial.roundingThreshold ?? 0.5,
-        baseRates: partial.baseRates ?? { general: 25 }, // ensure at least general exists
-        tiers: partial.tiers ?? {},
-        languageTierMap: partial.languageTierMap ?? {},
-        extraLanguagePct: partial.extraLanguagePct ?? 0,
-        complexity: partial.complexity ?? { Easy: 1, Medium: 1.2, Hard: 1.5 },
-        certifications: partial.certifications ?? {},
-        shipping: partial.shipping ?? { online: 0 },
-        tax: partial.tax ?? { defaultGST: 0.05, gstOnly: {}, hst: {} }, // ensure present
-      } as CompletePricingPolicy;
-    });
-
-    // Sum words from per-page table
+    // Words from per-page table
     let words = 0;
     {
-      const { data: qp } = await supabase
+      const { data: qp, error: qpErr } = await supabase
         .from("quote_pages")
         .select("word_count")
         .eq("quote_id", quote_id);
-      words = (qp ?? []).reduce((a, b) => a + (b.word_count || 0), 0);
+      if (qpErr) logger?.error("quote_pages.word_count query error", qpErr);
+      words = (qp ?? []).reduce((acc, r: any) => acc + (r?.word_count ?? 0), 0);
     }
 
-    // Convert to pages
+    // Convert to pages using your rounding rules
     const pagesRaw = words / policy.pageWordDivisor;
     const pages = quarterPage(pagesRaw, policy.roundingThreshold);
 
-    // Base rate by intended use
+    // Base rate by intended use (fallback to general)
     const baseRate =
       (policy.baseRates as any)[intended_use] ?? policy.baseRates.general;
 
-    // Language multiplier (detected array is optional — pass [] if not used)
-    const detected: string[] = [];
+    // Language multiplier
+    const detected: string[] = []; // fill if you store detection elsewhere
     const langMult = pickTierMultiplier(policy, languages ?? [], detected);
 
-    // Complexity multiplier: take the max across pages
-    const { data: cxRows } = await supabase
+    // Complexity multiplier: max across pages
+    const { data: cxRows, error: cxErr } = await supabase
       .from("glm_pages")
       .select("complexity")
       .eq("quote_id", quote_id);
-    const cxMax =
-      (cxRows ?? []).some((r) => r.complexity === "Hard")
+    if (cxErr) logger?.error("glm_pages.complexity query error", cxErr);
+
+    const cxMax: "Easy" | "Medium" | "Hard" =
+      (cxRows ?? []).some((r) => r?.complexity === "Hard")
         ? "Hard"
-        : (cxRows ?? []).some((r) => r.complexity === "Medium")
+        : (cxRows ?? []).some((r) => r?.complexity === "Medium")
         ? "Medium"
         : "Easy";
-    const cxMult = policy.complexity[cxMax as "Easy" | "Medium" | "Hard"];
+
+    const cxMult = policy.complexity[cxMax];
 
     // Labor & rounding
     const labor = pages * baseRate * langMult * cxMult;
     const laborRounded = ceilTo5(labor);
 
-    // Certification & shipping fees
+    // Certification & shipping
     const certType = options?.certification ?? "Standard";
     const certFee = policy.certifications[certType] ?? 0;
 
     const shipKey = options?.shipping ?? "online";
     const shipFee = policy.shipping[shipKey] ?? 0;
 
-    // Document type for rush rules, if any
-    const { data: oneDoc } = await supabase
+    // Pull a doc_type sample for rush rules (if used)
+    const { data: oneDoc, error: oneDocErr } = await supabase
       .from("glm_pages")
       .select("doc_type")
       .eq("quote_id", quote_id)
       .limit(1)
       .maybeSingle();
+    if (oneDocErr) logger?.error("glm_pages.doc_type query error", oneDocErr);
 
     // Rush markup rules
     const { subtotal, applied } = rushMarkup({
@@ -204,18 +237,19 @@ export const computePricing = inngest.createFunction(
       countryOfIssue: null,
     });
 
-    // Tax — fallback using region “AB” if none supplied
-    const region = "AB";
-    const inHST = (policy.tax.hst as any)[region];
-    const inGSTOnly = (policy.tax.gstOnly as any)[region];
-    const taxRate = inHST ?? inGSTOnly ?? policy.tax.defaultGST;
+    // Tax calc
+    const region = billing?.region ?? "AB";
+    const taxRate =
+      (policy.tax.hst as any)[region] ??
+      (policy.tax.gstOnly as any)[region] ??
+      policy.tax.defaultGST;
     const tax = Math.round(subtotal * taxRate * 100) / 100;
 
     // Total
     const total = Math.round((subtotal + tax) * 100) / 100;
 
-    // Persist pricing to quotes
-    await supabase
+    // Persist to quotes
+    const { error: upErr } = await supabase
       .from("quotes")
       .update({
         totalbillablepages: pages,
@@ -226,13 +260,13 @@ export const computePricing = inngest.createFunction(
         status: "ready",
       })
       .eq("quoteid", quote_id);
+    if (upErr) logger?.error("quotes update error", upErr);
 
     // Notify
     await step.run("notify-quote-ready", async () => {
       await inngest.send({ name: "quote/ready", data: { quote_id } });
     });
 
-    // Return inside handler (now valid)
     return {
       ok: true,
       quote_id,
@@ -245,7 +279,7 @@ export const computePricing = inngest.createFunction(
 );
 
 /**
- * ---------- 3. Quote created: prepare downstream jobs (kept minimal) ----------
+ * ------------ 2) Quote created: prepare downstream jobs ------------
  */
 export const quoteCreatedPrepareJobs = inngest.createFunction(
   { id: "quote-created-prepare-jobs" },
@@ -256,7 +290,11 @@ export const quoteCreatedPrepareJobs = inngest.createFunction(
 );
 
 /**
- * ---------- Exports ----------
- * Keep these grouped so the Netlify Inngest plugin can sync them.
+ * ------------ Export for Netlify Inngest plugin ------------
  */
-export const functions = [ocrDocument, geminiAnalyze, computePricing, quoteCreatedPrepareJobs];
+export const functions = [
+  ocrDocument,
+  geminiAnalyze,
+  computePricing,
+  quoteCreatedPrepareJobs,
+];
