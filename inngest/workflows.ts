@@ -90,7 +90,19 @@ export const computePricing = inngest.createFunction(
       .maybeSingle();
     if (!gj || gj.status !== "succeeded") return { skipped: "analysis-not-ready" };
 
-    const policy: CompletePricingPolicy = await step.run("load-policy", () => loadPolicy());
+  const policy: CompletePricingPolicy = await step.run("load-policy", () => {
+  const partialPolicy = loadPolicy();
+  return {
+    currency: "CAD", // or "USD" - provide a default
+    pageWordDivisor: 250, // provide defaults for other required fields
+    roundingThreshold: 0.5,
+    baseRates: {},
+    tiers: {},
+    languageTierMap: {},
+    // ... add other required fields with defaults
+    ...partialPolicy, // spread the loaded policy to override defaults
+  };
+});
 
     let words = 0;
     {
