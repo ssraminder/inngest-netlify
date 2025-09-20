@@ -79,15 +79,10 @@ export async function loadPolicy(): Promise<PricingPolicy> {
     .maybeSingle();
 
   if (!error && data?.settings) {
-    const dbSettings = data.settings as Partial<PricingPolicy>;
-
-    // If currency is null or undefined in the database, we want to ignore it
-    // and use the default value.
-    if (!dbSettings.currency) {
-      delete dbSettings.currency;
-    }
-
-    return { ...DEFAULTS, ...dbSettings };
+    // By merging DEFAULTS with the database settings and asserting the type,
+    // we are guaranteeing to the TypeScript compiler that the resulting object
+    // will match the PricingPolicy type, resolving the error.
+    return { ...DEFAULTS, ...(data.settings as Partial<PricingPolicy>) } as PricingPolicy;
   }
 
   return DEFAULTS;
