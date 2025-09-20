@@ -12,12 +12,6 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Inngest build plugin — auto-registers your /api/inngest endpoint
-[[plugins]]
-  package = "netlify-plugin-inngest"
-  [plugins.inputs]
-    # Do NOT hardcode host; Netlify sets it per deploy (prod & previews).
-    path = "/api/inngest"
 
 [functions]
   directory = "netlify/functions"
