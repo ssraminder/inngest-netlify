@@ -8,9 +8,65 @@ import { Storage } from "@google-cloud/storage";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// ... (Your type definitions for events like FilesUploaded, OcrComplete, etc., remain here)
 
-// --- OMITTED for brevity ---
+// ---------- Event data types (aligned to your tables) ----------
+type FilesUploaded = {
+  name: "files/uploaded";
+  data: {
+    quote_id: number;
+    file_id: string;
+    gcs_uri: string;
+    filename: string;
+    bytes: number;
+    mime: string;
+  };
+};
+
+type OcrComplete = {
+  name: "files/ocr-complete";
+  data: {
+    quote_id: number;
+    file_id: string;
+    page_count: number;
+    avg_confidence: number;
+    languages: Record<string, number>;
+  };
+};
+
+type AnalysisComplete = {
+  name: "files/analysis-complete";
+  data: {
+    quote_id: number;
+    doc_type: string | null;
+    country_of_issue: string | null;
+    complexity: "Easy" | "Medium" | "Hard";
+    names: string[];
+    billing: {
+      billable_words: number | null;
+      relevant_pages?: number[];
+      exclusions?: { page: number; reason: "blank" | "duplicate" | "irrelevant" }[];
+      per_page?: Array<{ index: number; words: number; complexity: "Easy" | "Medium" | "Hard" }>;
+    };
+  };
+};
+
+type QuoteSubmitted = {
+  name: "quote/submitted";
+  data: {
+    quote_id: number;
+    intended_use: "general" | "legal" | "immigration" | "academic" | "insurance";
+    languages: string[];
+    billing: { country: string; region?: string; currency: "CAD" | "USD" };
+    options?: {
+      rush?: "rush_1bd" | "same_day" | null;
+      certification?: string;
+      shipping?: "online" | "canadapost" | "pickup_calg" | "express_post";
+    };
+  };
+};
+
+// ... (rest of the file is unchanged, but included here for completeness)
+// ...
 
 // ---------- 2.4 Pricing: quote/submitted → compute only after analysis OK (and not HITL) ----------
 export const computePricing = inngest.createFunction(
@@ -34,7 +90,6 @@ export const computePricing = inngest.createFunction(
       .maybeSingle();
     if (!gj || gj.status !== "succeeded") return { skipped: "analysis-not-ready" };
 
-    // Load the policy and guarantee it's the complete type.
     const policy: CompletePricingPolicy = await step.run("load-policy", () => loadPolicy());
 
     let words = 0;
@@ -123,5 +178,4 @@ export const quoteCreatedPrepareJobs = inngest.createFunction(
     }
 );
 
-// **THIS IS THE FIX**: Restore the export of the functions array.
 export const functions = [ocrDocument, geminiAnalyze, computePricing, quoteCreatedPrepareJobs];
