@@ -1,6 +1,13 @@
 // lib/calc.ts
 import type { PricingPolicy } from "./policy";
 
+interface DocTypeEntry {
+  doc_type: string;
+  countryOfIssue?: string;
+  country_of_issue?: string;
+  preset_base?: number;
+}
+
 export function quarterPage(raw: number, tol=0.20) {
   const base = Math.max(0, raw);
   const frac = base - Math.trunc(base);
@@ -42,10 +49,10 @@ export function rushMarkup({
   docType?: string|null;
   countryOfIssue?: string|null;
 }) {
-  if (!tier) return { subtotal: laborRounded + certFee + shipFee, applied: null as const };
+  if (!tier) return { subtotal: laborRounded + certFee + shipFee, applied: null };
 
   const cfg = policy.rush[tier];
-  if (!cfg?.enabled) return { subtotal: laborRounded + certFee + shipFee, applied: null as const };
+  if (!cfg?.enabled) return { subtotal: laborRounded + certFee + shipFee, applied: null };
 
   const subtotalBase = laborRounded + certFee + shipFee;
   const calculatedBase = cfg.apply_to === "labor" ? laborRounded : subtotalBase;
@@ -53,7 +60,8 @@ export function rushMarkup({
   let base = calculatedBase;
   if (cfg.basis === "preset" && tier === "same_day") {
     // eligibility check: doc type + country + (max_pages is enforced upstream)
-    const entry = policy.rush.same_day.eligibility.find(e => e.doc_type === docType && e.country_of_issue === countryOfIssue);
+    const entry = policy.rush.same_day.eligibility.find(e => e.doc_type === docType && e.country_of_issue === countryOfIssue) as DocTypeEntry | undefined;
+    
     if (entry?.preset_base != null) {
       base = entry.preset_base;
     }
