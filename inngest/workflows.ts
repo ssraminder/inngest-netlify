@@ -113,8 +113,6 @@ const policy = await step.run("load-policy", () => {
 // Look for other required properties in your type definition and add them here
 
 });
-
-});
     let words = 0;
     {
       const { data: qp } = await supabase
