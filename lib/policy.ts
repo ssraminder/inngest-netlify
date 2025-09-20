@@ -5,27 +5,32 @@ export type RushBasis = "calculated" | "preset";
 export type RushApplyTo = "labor" | "subtotal";
 
 export type PricingPolicy = {
-  currency: "CAD" | "USD";
-  pageWordDivisor: number;        // default 225
-  roundingThreshold: number;      // default 0.20  (<= 0.20 → nearest 0.25, else ceil to 0.25)
-  baseRates: Record<string, number>; // intended_use → rate per page
-  tiers: Record<string, number>;  // A/B/C/D/default → multiplier
-  languageTierMap: Record<string, "A"|"B"|"C"|"D"|"default">; // languagename → tier
-  extraLanguagePct: number;       // 0.05 (i.e., +5% per extra)
-  complexity: { Easy:number; Medium:number; Hard:number }; // 1.00/1.15/1.30
-  certifications: Record<string, number>; // Standard/PPTC/Notarization/custom...
-  shipping: { online:number; canadapost:number; pickup_calg:number; express_post:number };
+  currency?: "CAD" | "USD"; // <-- Changed to optional
+  pageWordDivisor: number;
+  roundingThreshold: number;
+  baseRates: Record<string, number>;
+  tiers: Record<string, number>;
+  languageTierMap: Record<string, "A" | "B" | "C" | "D" | "default">;
+  extraLanguagePct: number;
+  complexity: { Easy: number; Medium: number; Hard: number };
+  certifications: Record<string, number>;
+  shipping: { online: number; canadapost: number; pickup_calg: number; express_post: number };
   tax: {
-    hst: Record<"NB"|"NL"|"NS"|"ON"|"PE", number>;
-    gstOnly: Record<"AB"|"NT"|"NU"|"YT", number>;
+    hst: Record<"NB" | "NL" | "NS" | "ON" | "PE", number>;
+    gstOnly: Record<"AB" | "NT" | "NU" | "YT", number>;
     defaultGST: number;
   };
   rush: {
-    rush_1bd: { enabled:boolean; percent:number; basis:RushBasis; apply_to:RushApplyTo };
+    rush_1bd: { enabled: boolean; percent: number; basis: RushBasis; apply_to: RushApplyTo };
     same_day: {
-      enabled:boolean; percent:number; basis:RushBasis; apply_to:RushApplyTo;
-      cutoff_local_time:string; timezone:string; max_pages:number;
-      eligibility: Array<{ doc_type:string; country_of_issue:string; preset_base?:number }>;
+      enabled: boolean;
+      percent: number;
+      basis: RushBasis;
+      apply_to: RushApplyTo;
+      cutoff_local_time: string;
+      timezone: string;
+      max_pages: number;
+      eligibility: Array<{ doc_type: string; country_of_issue: string; preset_base?: number }>;
     };
   };
 };
@@ -70,7 +75,6 @@ const DEFAULTS: PricingPolicy = {
 };
 
 export async function loadPolicy(): Promise<PricingPolicy> {
-  // Preferred: AppSettings with key 'pricing_policy_v1'
   const supabase = sbAdmin();
   const { data, error } = await supabase
     .from("AppSettings")
@@ -79,17 +83,7 @@ export async function loadPolicy(): Promise<PricingPolicy> {
     .maybeSingle();
 
   if (!error && data?.settings) {
-    const dbSettings = data.settings as Partial<PricingPolicy>;
-
-    // If the currency from the database is missing or null, we remove the key
-    // so that the default value from DEFAULTS is used instead.
-    if (!dbSettings.currency) {
-      delete dbSettings.currency;
-    }
-
-    // We merge the defaults with the settings from the database and then
-    // assert the result as PricingPolicy to satisfy the compiler.
-    return { ...DEFAULTS, ...dbSettings } as PricingPolicy;
+    return { ...DEFAULTS, ...(data.settings as Partial<PricingPolicy>) };
   }
 
   return DEFAULTS;
