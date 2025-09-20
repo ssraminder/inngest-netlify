@@ -111,10 +111,9 @@ const policy = await step.run("load-policy", () => {
 
 // You may need to add 2 more properties based on your CompletePricingPolicy interface
 // Look for other required properties in your type definition and add them here
-} as any; // Using ‘any’ to bypass remaining type issues
+
 });
-    ...partialPolicy, // This will override defaults with actual loaded values
-  } as CompletePricingPolicy;
+
 });
     let words = 0;
     {
