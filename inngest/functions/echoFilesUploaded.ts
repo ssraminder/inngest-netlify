@@ -1,7 +1,7 @@
 import { inngest } from "@/lib/inngest/client";
 
 export const echoFilesUploaded = inngest.createFunction(
-  { id: "echo-files-uploaded" },
+  { id: "ocr-document" },
   { event: "files/uploaded" },
   async ({ event }) => {
     // TODO: Implement files uploaded echo logic
