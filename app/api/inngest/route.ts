@@ -1,11 +1,15 @@
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 import { serve } from "inngest/next";
-// IMPORTANT: do not create Supabase clients at module scope here.
-// Your workflows can call sbAdmin() inside step.run() bodies.
-import { inngest } from "../../../lib/inngest/client";
-import { functions } from "../../../inngest/workflows";
+import { inngest } from "@/inngest/client";
 
-export const { GET, POST, PUT } = serve({ client: inngest, functions });
+import { quoteCreatedPrepareJobs } from "@/inngest/functions/quoteCreatedPrepareJobs";
+import { processUpload } from "@/inngest/functions/processUpload";
+import { echoFilesUploaded } from "@/inngest/functions/echoFilesUploaded";
+
+export const { GET, POST, PUT } = serve({
+  client: inngest,
+  functions: [
+    quoteCreatedPrepareJobs, // listens "quote/created"
+    processUpload,           // listens "files/uploaded"
+    echoFilesUploaded,       // logs "files/uploaded"
+  ],
+});
