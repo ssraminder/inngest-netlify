@@ -92,7 +92,7 @@ export const computePricing = inngest.createFunction(
 
 // Replace the problematic section around line 93 in inngest/workflows.ts
 
-const policy: CompletePricingPolicy = await step.run("load-policy", () => {
+const policy = await step.run("load-policy", () => {
   const partialPolicy = loadPolicy();
   return {
     currency: partialPolicy.currency || "CAD", // provide default
