@@ -90,7 +90,7 @@ export const computePricing = inngest.createFunction(
       .maybeSingle();
     if (!gj || gj.status !== "succeeded") return { skipped: "analysis-not-ready" };
 
- // Replace the problematic section around line 93 in inngest/workflows.ts
+// Replace the problematic section around line 93 in inngest/workflows.ts
 
 const policy: CompletePricingPolicy = await step.run("load-policy", () => {
   const partialPolicy = loadPolicy();
@@ -106,7 +106,6 @@ const policy: CompletePricingPolicy = await step.run("load-policy", () => {
     ...partialPolicy, // This will override defaults with actual loaded values
   } as CompletePricingPolicy;
 });
-
     let words = 0;
     {
       const { data: qp } = await supabase
