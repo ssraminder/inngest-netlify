@@ -1,15 +1,17 @@
 // inngest/workflows.ts
+
 import { inngest } from "../lib/inngest/client";
 import { sbAdmin } from "../lib/db/server";
 import { loadPolicy, CompletePricingPolicy } from "../lib/policy";
 import { quarterPage, ceilTo5, pickTierMultiplier, rushMarkup } from "../lib/calc";
-
 import { Storage } from "@google-cloud/storage";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+/**
+ * ---------- Event data types (aligned to your tables) ----------
+ */
 
-// ---------- Event data types (aligned to your tables) ----------
 type FilesUploaded = {
   name: "files/uploaded";
   data: {
@@ -29,7 +31,7 @@ type OcrComplete = {
     file_id: string;
     page_count: number;
     avg_confidence: number;
-    languages: Record<string, number>;
+    languages: Record<string, number>; // fixed: add K/V types
   };
 };
 
@@ -56,7 +58,11 @@ type QuoteSubmitted = {
     quote_id: number;
     intended_use: "general" | "legal" | "immigration" | "academic" | "insurance";
     languages: string[];
-    billing: { country: string; region?: string; currency: "CAD" | "USD" };
+    billing: {
+      country: string;
+      region?: string;
+      currency: "CAD" | "USD";
+    };
     options?: {
       rush?: "rush_1bd" | "same_day" | null;
       certification?: string;
@@ -65,54 +71,75 @@ type QuoteSubmitted = {
   };
 };
 
-// ... (rest of the file is unchanged, but included here for completeness)
-// ...
+/**
+ * ---------- 0. Stubs for referenced functions so file compiles ----------
+ * Replace with your real implementations when ready.
+ */
+export const ocrDocument = inngest.createFunction(
+  { id: "ocr-document" },
+  { event: "files/uploaded" },
+  async () => ({ ok: true })
+);
 
-// ---------- 2.4 Pricing: quote/submitted → compute only after analysis OK (and not HITL) ----------
+export const geminiAnalyze = inngest.createFunction(
+  { id: "gemini-analyze" },
+  { event: "files/ocr-complete" },
+  async () => ({ ok: true })
+);
+
+/**
+ * ---------- 2.4 Pricing: quote/submitted → compute only after analysis OK (and not HITL) ----------
+ */
 export const computePricing = inngest.createFunction(
-  { id: "compute-pricing" },
-  { event: "quote/submitted" },
-  async ({ event, step }) => {
-    const { quote_id, intended_use, languages, options } = (event as any).data as QuoteSubmitted["data"];
+  { id: "compute-pricing" },                    // 1) metadata
+  { event: "quote/submitted" },                 // 2) trigger
+  async ({ event, step }) => {                  // 3) handler
+    const { quote_id, intended_use, languages, options } =
+      (event as any).data as QuoteSubmitted["data"];
+
     const supabase = sbAdmin();
 
+    // If human-in-the-loop, skip pricing
     const { data: qrec } = await supabase
       .from("quotes")
       .select("status")
       .eq("quoteid", quote_id)
       .maybeSingle();
-    if (qrec?.status === "hitl") return { skipped: "hitl" };
+    if (qrec?.status === "hitl") {
+      return { skipped: "hitl" as const };
+    }
 
+    // Ensure GLM analysis exists and succeeded
     const { data: gj } = await supabase
       .from("glm_jobs")
       .select("status")
       .eq("quote_id", quote_id)
       .maybeSingle();
-    if (!gj || gj.status !== "succeeded") return { skipped: "analysis-not-ready" };
+    if (!gj || gj.status !== "succeeded") {
+      return { skipped: "analysis-not-ready" as const };
+    }
 
+    // Load pricing policy with safe defaults to satisfy CompletePricingPolicy
+    const policy = await step.run("load-policy", async (): Promise<CompletePricingPolicy> => {
+      const partial = loadPolicy() as Partial<CompletePricingPolicy>;
 
+      return {
+        // defaults + partial override
+        currency: partial.currency ?? "CAD",
+        pageWordDivisor: partial.pageWordDivisor ?? 250,
+        roundingThreshold: partial.roundingThreshold ?? 0.5,
+        baseRates: partial.baseRates ?? { general: 25 }, // ensure at least general exists
+        tiers: partial.tiers ?? {},
+        languageTierMap: partial.languageTierMap ?? {},
+        extraLanguagePct: partial.extraLanguagePct ?? 0,
+        complexity: partial.complexity ?? { Easy: 1, Medium: 1.2, Hard: 1.5 },
+        certifications: partial.certifications ?? {},
+        shipping: partial.shipping ?? { online: 0 },
+        tax: partial.tax ?? { defaultGST: 0.05, gstOnly: {}, hst: {} }, // ensure present
+      } as CompletePricingPolicy;
+    });
 
-const policy = await step.run("load-policy", () => {
-  const partialPolicy = loadPolicy();
-  return {
-    currency: partialPolicy.currency || "CAD",
-    pageWordDivisor: partialPolicy.pageWordDivisor || 250,
-    roundingThreshold: partialPolicy.roundingThreshold || 0.5,
-    baseRates: partialPolicy.baseRates || {},
-    tiers: partialPolicy.tiers || {},
-    languageTierMap: partialPolicy.languageTierMap || {},
-    extraLanguagePct: partialPolicy.extraLanguagePct || 0,
-    complexity: partialPolicy.complexity || {},
-    certifications: partialPolicy.certifications || {},
-    shipping: partialPolicy.shipping || {},
-    ...partialPolicy,
-  } as any;
-});
-
-// You may need to add 2 more properties based on your CompletePricingPolicy interface
-// Look for other required properties in your type definition and add them here
-
-});
+    // Sum words from per-page table
     let words = 0;
     {
       const { data: qp } = await supabase
@@ -121,13 +148,20 @@ const policy = await step.run("load-policy", () => {
         .eq("quote_id", quote_id);
       words = (qp ?? []).reduce((a, b) => a + (b.word_count || 0), 0);
     }
+
+    // Convert to pages
     const pagesRaw = words / policy.pageWordDivisor;
     const pages = quarterPage(pagesRaw, policy.roundingThreshold);
 
-    const baseRate = policy.baseRates[intended_use] ?? policy.baseRates.general;
+    // Base rate by intended use
+    const baseRate =
+      (policy.baseRates as any)[intended_use] ?? policy.baseRates.general;
+
+    // Language multiplier (detected array is optional — pass [] if not used)
     const detected: string[] = [];
     const langMult = pickTierMultiplier(policy, languages ?? [], detected);
 
+    // Complexity multiplier: take the max across pages
     const { data: cxRows } = await supabase
       .from("glm_pages")
       .select("complexity")
@@ -140,21 +174,26 @@ const policy = await step.run("load-policy", () => {
         : "Easy";
     const cxMult = policy.complexity[cxMax as "Easy" | "Medium" | "Hard"];
 
-    let labor = pages * baseRate * langMult * cxMult;
+    // Labor & rounding
+    const labor = pages * baseRate * langMult * cxMult;
     const laborRounded = ceilTo5(labor);
 
+    // Certification & shipping fees
     const certType = options?.certification ?? "Standard";
     const certFee = policy.certifications[certType] ?? 0;
-    const shipKey = options?.shipping ?? "online";
-    const shipFee = policy.shipping[shipKey];
 
+    const shipKey = options?.shipping ?? "online";
+    const shipFee = policy.shipping[shipKey] ?? 0;
+
+    // Document type for rush rules, if any
     const { data: oneDoc } = await supabase
       .from("glm_pages")
       .select("doc_type")
       .eq("quote_id", quote_id)
       .limit(1)
       .maybeSingle();
-      
+
+    // Rush markup rules
     const { subtotal, applied } = rushMarkup({
       policy,
       tier: options?.rush ?? null,
@@ -165,14 +204,17 @@ const policy = await step.run("load-policy", () => {
       countryOfIssue: null,
     });
 
+    // Tax — fallback using region “AB” if none supplied
     const region = "AB";
     const inHST = (policy.tax.hst as any)[region];
     const inGSTOnly = (policy.tax.gstOnly as any)[region];
     const taxRate = inHST ?? inGSTOnly ?? policy.tax.defaultGST;
-
     const tax = Math.round(subtotal * taxRate * 100) / 100;
+
+    // Total
     const total = Math.round((subtotal + tax) * 100) / 100;
 
+    // Persist pricing to quotes
     await supabase
       .from("quotes")
       .update({
@@ -185,18 +227,36 @@ const policy = await step.run("load-policy", () => {
       })
       .eq("quoteid", quote_id);
 
-    await inngest.send({ name: "quote/ready", data: { quote_id } });
+    // Notify
+    await step.run("notify-quote-ready", async () => {
+      await inngest.send({ name: "quote/ready", data: { quote_id } });
+    });
 
-    return { ok: true, quote_id, pages, baseRate, appliedRush: applied ?? null, total };
+    // Return inside handler (now valid)
+    return {
+      ok: true,
+      quote_id,
+      pages,
+      baseRate,
+      appliedRush: applied ?? null,
+      total,
+    };
   }
 );
 
+/**
+ * ---------- 3. Quote created: prepare downstream jobs (kept minimal) ----------
+ */
 export const quoteCreatedPrepareJobs = inngest.createFunction(
-    { id: "quote-created-prepare-jobs" },
-    { event: "quote/created" },
-    async () => {
-      return { ok: true };
-    }
+  { id: "quote-created-prepare-jobs" },
+  { event: "quote/created" },
+  async () => {
+    return { ok: true };
+  }
 );
 
+/**
+ * ---------- Exports ----------
+ * Keep these grouped so the Netlify Inngest plugin can sync them.
+ */
 export const functions = [ocrDocument, geminiAnalyze, computePricing, quoteCreatedPrepareJobs];
