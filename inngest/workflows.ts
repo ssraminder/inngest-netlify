@@ -1,3 +1,4 @@
+import { loadPolicy, ensurePolicy, PricingPolicy } from "../lib/policy";
 // inngest/workflows.ts
 // Phase-2: OCR → Gemini (analysis+billing) → Pricing
 // - Document AI wired with GCS download and Processor call
@@ -6,7 +7,6 @@
 
 import { inngest } from "../lib/inngest/client";
 import { sbAdmin } from "../lib/db/server";
-import { loadPolicy } from "../lib/policy";
 import { quarterPage, ceilTo5, pickTierMultiplier, rushMarkup } from "../lib/calc";
 
 // External SDKs (install once: npm i @google-cloud/storage @google-cloud/documentai @google/generative-ai)
@@ -315,7 +315,7 @@ export const geminiAnalyze = inngest.createFunction(
             quote_id,
             file_id: qp?.[0]?.file_token ?? null, // if you want to keep track per-file; else null
             page_index: r.index,
-            doc_type: r as any?.docType ?? result.doc_type ?? null,
+            doc_type: ((r as any).docType) ?? result.doc_type ?? null,
             complexity: r.complexity,
             language_primary: null,
             language_primary_pct: null,
@@ -391,7 +391,7 @@ export const computePricing = inngest.createFunction(
     if (!gj || gj.status !== "succeeded") return { skipped: "analysis-not-ready" };
 
     // Policy (from AppSettings or ENV-backed defaults)
-    const policy = await step.run("load-policy", () => loadPolicy());
+    const policy = await step.run("load-policy", () => loadPolicy()) as PricingPolicy;
 
     // Billable words: if Gemini provided a number, use it; else fallback to sum of quote_pages.word_count
     let words = 0;
@@ -411,7 +411,9 @@ export const computePricing = inngest.createFunction(
 
     // Language tier: declared ∪ detected (detected via glm_pages.langs if you add them later)
     const detected: string[] = []; // extend later if you store detected languages
-    const langMult = pickTierMultiplier(policy, languages ?? [], detected);
+
+const fullPolicy = ensurePolicy(policy);
+const langMult = pickTierMultiplier(fullPolicy, languages ?? [], detected);
 
     // Complexity roll-up: pick the max severity seen in glm_pages (Hard > Medium > Easy)
     const { data: cxRows } = await supabase
