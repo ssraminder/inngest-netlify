@@ -90,18 +90,21 @@ export const computePricing = inngest.createFunction(
       .maybeSingle();
     if (!gj || gj.status !== "succeeded") return { skipped: "analysis-not-ready" };
 
-  const policy: CompletePricingPolicy = await step.run("load-policy", () => {
+ // Replace the problematic section around line 93 in inngest/workflows.ts
+
+const policy: CompletePricingPolicy = await step.run("load-policy", () => {
   const partialPolicy = loadPolicy();
   return {
-    currency: "CAD", // or "USD" - provide a default
-    pageWordDivisor: 250, // provide defaults for other required fields
-    roundingThreshold: 0.5,
-    baseRates: {},
-    tiers: {},
-    languageTierMap: {},
-    // ... add other required fields with defaults
-    ...partialPolicy, // spread the loaded policy to override defaults
-  };
+    currency: partialPolicy.currency || "CAD", // provide default
+    pageWordDivisor: partialPolicy.pageWordDivisor || 250,
+    roundingThreshold: partialPolicy.roundingThreshold || 0.5,
+    baseRates: partialPolicy.baseRates || {},
+    tiers: partialPolicy.tiers || {},
+    languageTierMap: partialPolicy.languageTierMap || {},
+    // Add any other required properties from CompletePricingPolicy with defaults
+    // You'll need to check your CompletePricingPolicy type definition to see all required fields
+    ...partialPolicy, // This will override defaults with actual loaded values
+  } as CompletePricingPolicy;
 });
 
     let words = 0;
