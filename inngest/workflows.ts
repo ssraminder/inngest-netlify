@@ -14,6 +14,7 @@ import { Storage } from "@google-cloud/storage";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+
 // ---------- Event data types (aligned to your tables) ----------
 type FilesUploaded = {
   name: "files/uploaded";
@@ -54,6 +55,7 @@ type AnalysisComplete = {
     };
   };
 };
+
 
 type QuoteSubmitted = {
   name: "quote/submitted";
