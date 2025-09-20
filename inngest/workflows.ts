@@ -1,11 +1,16 @@
 // inngest/workflows.ts
 import { inngest } from "../lib/inngest/client";
 import { sbAdmin } from "../lib/db/server";
-import { loadPolicy, PricingPolicy } from "../lib/policy";
+import { loadPolicy, CompletePricingPolicy } from "../lib/policy";
 import { quarterPage, ceilTo5, pickTierMultiplier, rushMarkup } from "../lib/calc";
 
-// ... (rest of the file remains the same until the computePricing function)
-// ... (I've omitted the unchanged parts for brevity)
+import { Storage } from "@google-cloud/storage";
+import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// ... (Your type definitions for events like FilesUploaded, OcrComplete, etc., remain here)
+
+// --- OMITTED for brevity ---
 
 // ---------- 2.4 Pricing: quote/submitted → compute only after analysis OK (and not HITL) ----------
 export const computePricing = inngest.createFunction(
@@ -15,7 +20,6 @@ export const computePricing = inngest.createFunction(
     const { quote_id, intended_use, languages, options } = (event as any).data as QuoteSubmitted["data"];
     const supabase = sbAdmin();
 
-    // If in HITL, do not price yet
     const { data: qrec } = await supabase
       .from("quotes")
       .select("status")
@@ -23,7 +27,6 @@ export const computePricing = inngest.createFunction(
       .maybeSingle();
     if (qrec?.status === "hitl") return { skipped: "hitl" };
 
-    // Require analysis success
     const { data: gj } = await supabase
       .from("glm_jobs")
       .select("status")
@@ -31,13 +34,9 @@ export const computePricing = inngest.createFunction(
       .maybeSingle();
     if (!gj || gj.status !== "succeeded") return { skipped: "analysis-not-ready" };
 
-    // Policy (from AppSettings or ENV-backed defaults)
-    const policy = await step.run("load-policy", () => loadPolicy());
+    // Load the policy and guarantee it's the complete type.
+    const policy: CompletePricingPolicy = await step.run("load-policy", () => loadPolicy());
 
-    // **THIS IS THE FIX**: Ensure currency has a default value.
-    policy.currency = policy.currency || "CAD";
-
-    // Billable words: if Gemini provided a number, use it; else fallback to sum of quote_pages.word_count
     let words = 0;
     {
       const { data: qp } = await supabase
@@ -49,11 +48,9 @@ export const computePricing = inngest.createFunction(
     const pagesRaw = words / policy.pageWordDivisor;
     const pages = quarterPage(pagesRaw, policy.roundingThreshold);
 
-    // ... (the rest of the function continues as before)
-
     const baseRate = policy.baseRates[intended_use] ?? policy.baseRates.general;
     const detected: string[] = [];
-    const langMult = pickTierMultiplier(policy as PricingPolicy, languages ?? [], detected); // Added assertion here for safety
+    const langMult = pickTierMultiplier(policy, languages ?? [], detected);
 
     const { data: cxRows } = await supabase
       .from("glm_pages")
@@ -81,9 +78,9 @@ export const computePricing = inngest.createFunction(
       .eq("quote_id", quote_id)
       .limit(1)
       .maybeSingle();
-
+      
     const { subtotal, applied } = rushMarkup({
-      policy: policy as PricingPolicy, // Added assertion here for safety
+      policy,
       tier: options?.rush ?? null,
       laborRounded,
       certFee,
@@ -117,4 +114,14 @@ export const computePricing = inngest.createFunction(
     return { ok: true, quote_id, pages, baseRate, appliedRush: applied ?? null, total };
   }
 );
-// ... (rest of the file)
+
+export const quoteCreatedPrepareJobs = inngest.createFunction(
+    { id: "quote-created-prepare-jobs" },
+    { event: "quote/created" },
+    async () => {
+      return { ok: true };
+    }
+);
+
+// **THIS IS THE FIX**: Restore the export of the functions array.
+export const functions = [ocrDocument, geminiAnalyze, computePricing, quoteCreatedPrepareJobs];
