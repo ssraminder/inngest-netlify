@@ -4,3 +4,8 @@ node_modules/
 .next/
 dist/
 out/
+
+# Build output
+.next/
+dist/
+out/

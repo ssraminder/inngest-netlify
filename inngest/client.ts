@@ -1,5 +1,4 @@
 import { Inngest } from "inngest";
 
-export const inngest = new Inngest({
-  id: "cethos-quote-platform",
-});
+// v3 requires an `id` (not `name`)
+export const inngest = new Inngest({ id: "cethos-inngest-app" });
