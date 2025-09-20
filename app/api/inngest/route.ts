@@ -2,10 +2,10 @@
 import { serve } from "inngest/next";
 import { inngest } from "@/lib/inngest/client";
 
-// Import the list exported by your workflows file
-import { functions as workflowFunctions } from "@/inngest/workflows";
+// Import unified list (deduped) from inngest/index.ts
+import { functions as inngestFunctions } from "@/inngest";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: workflowFunctions,
+  functions: inngestFunctions,
 });
