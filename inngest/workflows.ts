@@ -1,7 +1,7 @@
 // @ts-nocheck
 // inngest/workflows.ts
 
-import { inngest } from "../lib/inngest/client";
+import { inngest } from "@/lib/inngest/client";
 import { sbAdmin } from "../lib/db/server";
 import { loadPolicy } from "../lib/policy";
 import type { CompletePricingPolicy } from "../lib/policy";
@@ -290,6 +290,12 @@ export const quoteCreatedPrepareJobs = inngest.createFunction(
   }
 );
 
+export const cethosCompositePricingShim = inngest.createFunction(
+  { id: "cethos-quote-platform-compute-pricing" },
+  { event: "internal/compute-pricing-shim" },
+  async ({ step, event }) => step.invoke("compute-pricing", event.data)
+);
+
 /**
  * ------------ Export for Netlify Inngest plugin ------------
  */
@@ -298,4 +304,5 @@ export const functions = [
   geminiAnalyze,
   computePricing,
   quoteCreatedPrepareJobs,
+  cethosCompositePricingShim, // TEMP: remove after caller is fixed
 ];
