@@ -1,7 +1,9 @@
 // @ts-nocheck
 // inngest/workflows.ts
 
-import { inngest } from "../lib/inngest/client";
+import { inngest } from "@/lib/inngest/client";
+import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
+import { GoogleAuth } from "google-auth-library";
 import { sbAdmin } from "../lib/db/server";
 import { loadPolicy } from "../lib/policy";
 import type { CompletePricingPolicy } from "../lib/policy";
@@ -77,6 +79,39 @@ type QuoteSubmitted = {
 /**
  * ------------ Helpers ------------
  */
+const DOC_AI_MAX_BYTES = 20 * 1024 * 1024; // 20 MB sync limit
+const DOC_AI_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"];
+
+const documentAiClients = new Map();
+
+function getDocumentAiClient(location) {
+  const key = location || "us";
+  if (documentAiClients.has(key)) {
+    return documentAiClients.get(key);
+  }
+
+  const options = { apiEndpoint: `${key}-documentai.googleapis.com` };
+
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+  const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY;
+  if (clientEmail && privateKeyRaw) {
+    const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
+    options.auth = new GoogleAuth({
+      credentials: {
+        client_email: clientEmail,
+        private_key: privateKey,
+      },
+      scopes: DOC_AI_SCOPES,
+    });
+  } else {
+    options.auth = new GoogleAuth({ scopes: DOC_AI_SCOPES });
+  }
+
+  const client = new DocumentProcessorServiceClient(options);
+  documentAiClients.set(key, client);
+  return client;
+}
+
 function ensureCompletePolicy(
   raw: Partial<CompletePricingPolicy> | any
 ): CompletePricingPolicy {
@@ -114,13 +149,177 @@ function ensureCompletePolicy(
 }
 
 /**
- * ------------ 0) Stubs so file compiles if these are WIP ------------
- * Replace with real implementations when ready.
+ * ------------ 0) OCR + follow-up stubs ------------
  */
 export const ocrDocument = inngest.createFunction(
   { id: "ocr-document" },
   { event: "files/uploaded" },
-  async () => ({ ok: true })
+  async ({ event, step, logger }) => {
+    const { quote_id, file_id, gcs_uri, filename, bytes, mime } =
+      (event as any).data as FilesUploaded["data"];
+
+    logger?.info("ocr-document received", { quote_id, file_id });
+
+    const limit = DOC_AI_MAX_BYTES;
+    if (bytes > limit) {
+      const reason = `File exceeds ${limit} byte sync processing limit`;
+      logger?.error("ocr-document file too large", { quote_id, file_id, reason });
+      throw Object.assign(new Error(reason), { result: { ok: false, reason } });
+    }
+
+    const projectId = process.env.GOOGLE_PROJECT_ID;
+    const processorId = process.env.DOCAI_PROCESSOR_ID;
+    const location = process.env.DOCAI_LOCATION || "us";
+    if (!projectId || !processorId) {
+      const reason = "Missing GOOGLE_PROJECT_ID or DOCAI_PROCESSOR_ID";
+      logger?.error("ocr-document missing configuration", {
+        quote_id,
+        file_id,
+        reason,
+      });
+      throw Object.assign(new Error(reason), { result: { ok: false, reason } });
+    }
+
+    const fileBuffer: Buffer = await step.run(
+      "download-uploaded-file",
+      async () => {
+        const response = await fetch(gcs_uri);
+        if (!response.ok) {
+          throw new Error(
+            `Failed to download file: ${response.status} ${response.statusText}`
+          );
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+      }
+    );
+
+    if (fileBuffer.byteLength > limit) {
+      // TODO: Switch to GCS document processing for larger files.
+      const reason = `Downloaded file exceeds ${limit} byte sync processing limit`;
+      logger?.error("ocr-document file exceeds limit after download", {
+        quote_id,
+        file_id,
+        reason,
+      });
+      throw Object.assign(new Error(reason), { result: { ok: false, reason } });
+    }
+
+    const client = getDocumentAiClient(location);
+    const [processResponse] = await step.run("documentai-process", async () =>
+      client.processDocument({
+        name: client.processorPath(projectId, location, processorId),
+        rawDocument: {
+          content: fileBuffer.toString("base64"),
+          mimeType: mime || "application/octet-stream",
+        },
+      })
+    );
+
+    const document = processResponse?.document ?? {};
+    const pages = Array.isArray(document.pages) ? document.pages : [];
+
+    let words = 0;
+    let totalConfidence = 0;
+    let confidenceCount = 0;
+    const languages: Record<string, number> = {};
+
+    function recordLanguage(code?: string | null, confidence?: number | null) {
+      if (!code) return;
+      const score = confidence ?? 0;
+      const current = languages[code] ?? 0;
+      if (score > current) languages[code] = score;
+    }
+
+    if (Array.isArray(document.languages)) {
+      for (const lang of document.languages) {
+        recordLanguage(lang?.languageCode, lang?.confidence);
+      }
+    }
+
+    for (const page of pages) {
+      if (Array.isArray(page?.tokens)) {
+        words += page.tokens.length;
+      }
+
+      const pageConfidence =
+        typeof page?.layout?.confidence === "number"
+          ? page.layout.confidence
+          : typeof page?.confidence === "number"
+            ? page.confidence
+            : null;
+      if (pageConfidence !== null) {
+        totalConfidence += pageConfidence;
+        confidenceCount += 1;
+      }
+
+      const detectedPageLanguages =
+        Array.isArray(page?.detectedLanguages)
+          ? page.detectedLanguages
+          : Array.isArray(page?.layout?.detectedLanguages)
+            ? page.layout.detectedLanguages
+            : [];
+      for (const lang of detectedPageLanguages) {
+        recordLanguage(lang?.languageCode, lang?.confidence);
+      }
+    }
+
+    const pageCount = pages.length;
+    const avgConfidence =
+      confidenceCount > 0 ? totalConfidence / confidenceCount : null;
+    const normalizedConfidence = avgConfidence ?? 0;
+
+    const primaryLanguage = Object.entries(languages)
+      .sort((a, b) => b[1] - a[1])
+      .map(([code]) => code)[0] ?? null;
+
+    const supabase = sbAdmin();
+    await step.run("quote-files-upsert", async () => {
+      const { error } = await supabase
+        .from("quote_files")
+        .upsert(
+          {
+            quote_id,
+            file_id,
+            ocr_pages: pageCount,
+            words,
+            language: primaryLanguage,
+            bytes,
+            mime,
+            filename,
+            storage_path: gcs_uri,
+            status: "ocr_complete",
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "quote_id,file_id" }
+        );
+      if (error) throw new Error(error.message);
+    });
+
+    await step.sendEvent("emit-ocr-complete", {
+      name: "files/ocr-complete",
+      data: {
+        quote_id,
+        file_id,
+        page_count: pageCount,
+        avg_confidence: normalizedConfidence,
+        languages,
+      },
+    });
+
+    logger?.info("ocr-document complete", {
+      quote_id,
+      file_id,
+      page_count: pageCount,
+    });
+
+    return {
+      ok: true,
+      page_count: pageCount,
+      words,
+      avg_confidence: normalizedConfidence,
+    };
+  }
 );
 
 export const geminiAnalyze = inngest.createFunction(
@@ -290,6 +489,12 @@ export const quoteCreatedPrepareJobs = inngest.createFunction(
   }
 );
 
+export const cethosCompositePricingShim = inngest.createFunction(
+  { id: "cethos-quote-platform-compute-pricing" },
+  { event: "internal/compute-pricing-shim" },
+  async ({ step, event }) => step.invoke("compute-pricing", event.data)
+);
+
 /**
  * ------------ Export for Netlify Inngest plugin ------------
  */
@@ -298,4 +503,5 @@ export const functions = [
   geminiAnalyze,
   computePricing,
   quoteCreatedPrepareJobs,
+  cethosCompositePricingShim, // TEMP: remove after caller is fixed
 ];
