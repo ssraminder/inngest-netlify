@@ -92,20 +92,26 @@ function getDocumentAiClient(location) {
 
   const options = { apiEndpoint: `${key}-documentai.googleapis.com` };
 
+  // Prefer full JSON creds if provided; else fall back to email/key; else ADC
+  const jsonCreds = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+    ? JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+    : undefined;
+
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
   const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY;
-  if (clientEmail && privateKeyRaw) {
-    const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
-    options.auth = new GoogleAuth({
-      credentials: {
-        client_email: clientEmail,
-        private_key: privateKey,
-      },
-      scopes: DOC_AI_SCOPES,
-    });
-  } else {
-    options.auth = new GoogleAuth({ scopes: DOC_AI_SCOPES });
-  }
+
+  const fallbackCreds =
+    clientEmail && privateKeyRaw
+      ? {
+          client_email: clientEmail,
+          private_key: privateKeyRaw.replace(/\\n/g, "\n"),
+        }
+      : undefined;
+
+  options.auth = new GoogleAuth({
+    credentials: jsonCreds ?? fallbackCreds, // may be undefined → uses ADC
+    scopes: DOC_AI_SCOPES,
+  });
 
   const client = new DocumentProcessorServiceClient(options);
   documentAiClients.set(key, client);
