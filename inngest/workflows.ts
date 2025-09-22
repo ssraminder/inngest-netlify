@@ -2,17 +2,18 @@
 // inngest/workflows.ts
 
 import { inngest } from "@/lib/inngest/client";
+
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { GoogleAuth } from "google-auth-library";
-import { sbAdmin } from "../lib/db/server";
-import { loadPolicy } from "../lib/policy";
+import { sbAdmin } from "@/lib/db/server";
+import { loadPolicy } from "@/lib/policy";
 import type { CompletePricingPolicy } from "../lib/policy";
 import {
   quarterPage,
   ceilTo5,
   pickTierMultiplier,
   rushMarkup,
-} from "../lib/calc";
+} from "@/lib/calc";
 
 /**
  * ------------ Event data types ------------
