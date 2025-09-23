@@ -1,4 +1,3 @@
-// inngest/index.ts
 /**
  * inngest/index.ts
  * Consolidate runtime function objects from /inngest/functions/* and /inngest/workflows.ts
