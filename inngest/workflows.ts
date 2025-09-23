@@ -1,6 +1,7 @@
 // @ts-nocheck
 // inngest/workflows.ts
 
+import { safeReturnAndPersistMaybe } from "@/lib/inngest/safeOutput";
 import { inngest } from "@/lib/inngest/client";
 import { getGoogleCreds } from "@/lib/getGoogleCreds";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
@@ -227,15 +228,20 @@ export const ocrDocument = inngest.createFunction(
 
     const processorName = `projects/${projectId}/locations/${location}/processors/${processorId}`;
 
-    const [processResponse] = await step.run("documentai-process", async () =>
-      client.processDocument({
-        name: processorName,
-        rawDocument: {
-          content: fileBuffer.toString("base64"),
-          mimeType: mime || "application/octet-stream",
-        },
-      })
-    );
+  const [processResponse] = await step.run("documentai-process", async () => {
+  // send raw bytes directly to the client (avoid passing base64 string)
+  // DocumentProcessorServiceClient accepts bytes for rawDocument.content
+  const [response] = await client.processDocument({
+    name: processorName,
+    rawDocument: {
+      // pass Buffer directly (avoids serialization issues)
+      content: fileBuffer,
+      mimeType: mime || "application/octet-stream",
+    },
+  });
+  return response;
+});
+
 
     const document = processResponse?.document ?? {};
     const pages = Array.isArray(document.pages) ? document.pages : [];
