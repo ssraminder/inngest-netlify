@@ -8,8 +8,5 @@ import { functions as workflowFunctions } from "@/inngest/workflows";
 // ⬇️ include ALL functions you want to expose; spread arrays if you have more
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [
-    ...workflowFunctions,  // includes compute-pricing, ocr-document, gemini-analyze, quote-created-prepare-jobs
-    // ...any other function arrays or single functions you export elsewhere
-  ],
+  functions: workflowFunctions,
 });

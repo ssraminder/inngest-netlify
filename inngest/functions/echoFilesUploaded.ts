@@ -1,5 +1,5 @@
 // inngest/functions/echoFilesUploaded.ts
-import { inngest } from "@/inngest/client";
+import { inngest } from "@/lib/inngest/client";
 
 export const echoFilesUploaded = inngest.createFunction(
   { id: "echo-files-uploaded" },            // <-- set to the stable ID Inngest expects
