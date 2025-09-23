@@ -1,54 +1,24 @@
 // inngest/index.ts
-// Central index that exports a deduplicated list of all functions
-// (imported from the functions folder + workflows file)
+// Consolidate all function exports (from /inngest/functions/* AND /inngest/workflows.ts)
+// into a single `functions` array that the /api/inngest route can import.
 
-import * as funcs from "./functions"; // note: TS path resolves to importing from files in the folder
-import { functions as workflowFunctions } from "./workflows";
-
-// Collect functions exported individually from /inngest/functions files.
-// Because there isn't an index.ts inside /inngest/functions in the repo
-// we import everything from "./functions" — the bundler will include the files.
-const fileExports: any = funcs || {};
-
-// Build an array of candidate functions from named exports in /inngest/functions
-const fileFunctions = Object.values(fileExports).filter(Boolean);
+import * as fnFiles from "./functions";
+import * as workflows from "./workflows";
 
 /**
- * workflowFunctions is exported from workflows.ts as `export const functions = [ ... ]`
- * so it should be an array already.
+ * Collect runtime function objects from the functions folder.
+ * Each file should export a function object returned by `inngest.createFunction(...)`.
  */
-const wfFunctions: any[] = Array.isArray(workflowFunctions) ? workflowFunctions : [];
+const fileFns = Object.values(fnFiles).filter(Boolean) as any[];
 
 /**
- * Combine and dedupe by function id. Different versions of the SDK attach the
- * ID in different places; we'll check common properties and use whichever exists.
+ * Collect exported items from workflows (ocrDocument, geminiAnalyze, computePricing, etc.)
+ * They are also expected to be the function objects created with `inngest.createFunction`.
  */
-function getFunctionId(fn: any): string | undefined {
-  if (!fn) return undefined;
-  // common locations checked in order:
-  return fn.id ?? fn.name ?? (fn?.options && fn.options.id) ?? (fn?.meta && fn.meta.id);
-}
+const workflowFns = Object.values(workflows).filter(Boolean) as any[];
 
-const all = [...fileFunctions, ...wfFunctions];
-
-// Deduplicate preserving first occurrence
-const seen = new Set<string>();
-const deduped = [];
-for (const f of all) {
-  const id = getFunctionId(f);
-  if (!id) {
-    // include functions without id (shouldn't happen), but keep them
-    deduped.push(f);
-    continue;
-  }
-  if (!seen.has(id)) {
-    seen.add(id);
-    deduped.push(f);
-  } else {
-    // duplicate - skip
-    // (if you want the workflow version to take precedence, swap the order above)
-  }
-}
-
-export const functions = deduped;
-export default functions;
+/**
+ * Final combined array. Order matters only if you rely on a shim that invokes another function.
+ * Place fileFns first, then workflowFns so explicit workflows (ocr, compute-pricing, gemini) are present.
+ */
+export const functions = [...fileFns, ...workflowFns];
