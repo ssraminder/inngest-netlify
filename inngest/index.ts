@@ -1,39 +1,36 @@
 /**
  * inngest/index.ts
- * Consolidate runtime function objects from /inngest/functions/* and /inngest/workflows.ts
- * Filter to valid Inngest functions and deduplicate by function id (keep first seen).
- * Call getConfig with the function as "this" to avoid destructuring errors in some impls.
+ * Collect likely Inngest function objects without invoking getConfig at build time.
+ * Strategy:
+ *  - Collect exports from /inngest/functions and from ./workflows (prefer explicit workflows.functions).
+ *  - Filter for likely function objects (function or has getConfig property) WITHOUT calling getConfig.
+ *  - Deduplicate by reference (keep first seen).
  */
 
 import * as fnFiles from "./functions";
 import * as workflows from "./workflows";
 
-function isInngestFunction(v: any): boolean {
-  return !!v && typeof v.getConfig === "function";
+const isLikelyFn = (v: any) => !!v && (typeof v === "function" || typeof v?.getConfig === "function");
+
+// collect from functions folder (filter conservatively)
+const fileFns = Object.values(fnFiles).filter(isLikelyFn) as any[];
+
+// prefer explicit workflows.functions if present
+let workflowFns: any[] = [];
+if (Array.isArray((workflows as any).functions)) {
+  workflowFns = (workflows as any).functions.filter(isLikelyFn);
+} else {
+  workflowFns = Object.values(workflows).filter(isLikelyFn);
 }
 
-const fileFns = Object.values(fnFiles).filter(isInngestFunction) as any[];
-const workflowFns = Object.values(workflows).filter(isInngestFunction) as any[];
-
-// build map by id to dedupe (keep first seen)
-const seen = new Map<string, any>();
+// dedupe by reference (no getConfig calls here)
+const seen = new Set<any>();
+const combined: any[] = [];
 for (const fn of [...fileFns, ...workflowFns]) {
-  try {
-    // Call getConfig with explicit `this` to support implementations that rely on it
-    const cfg = typeof fn.getConfig === "function" ? fn.getConfig.call(fn) : undefined;
-    const id = cfg?.id || cfg?.name || (fn && fn.name) || undefined;
-    if (!id) continue;
-    if (!seen.has(id)) {
-      seen.set(id, fn);
-    } else {
-      // eslint-disable-next-line no-console
-      console.warn(`inngest/index: duplicate function id "${id}" skipped (one already registered)`);
-    }
-  } catch (err) {
-    // ignore items that fail to report config
-    // eslint-disable-next-line no-console
-    console.warn("inngest/index: skipping non-conforming export", err?.message ?? err);
+  if (!seen.has(fn)) {
+    seen.add(fn);
+    combined.push(fn);
   }
 }
 
-export const functions = Array.from(seen.values());
+export const functions = combined;
