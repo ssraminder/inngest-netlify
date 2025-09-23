@@ -1,6 +1,7 @@
 // @ts-nocheck
 // inngest/workflows.ts
 
+import { safeReturnAndPersistMaybe } from "@/lib/inngest/safeOutput";
 import { inngest } from "@/lib/inngest/client";
 import { getGoogleCreds } from "@/lib/getGoogleCreds";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
