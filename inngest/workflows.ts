@@ -27,6 +27,8 @@ type FilesUploaded = {
     filename: string;
     bytes: number;
     mime: string;
+    bucket?: string | null;
+    storage_path?: string | null;
   };
 };
 
@@ -38,6 +40,7 @@ type OcrComplete = {
     page_count: number;
     avg_confidence: number;
     languages: Record<string, number>;
+    document_ref?: string | null;
   };
 };
 
@@ -84,6 +87,108 @@ const DOC_AI_MAX_BYTES = 20 * 1024 * 1024; // 20 MB sync limit
 const DOC_AI_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"];
 
 const documentAiClients = new Map();
+
+const DEFAULT_SUPABASE_BUCKET = process.env.SUPABASE_BUCKET ?? "orders";
+const OCR_DOCUMENT_BUCKET =
+  process.env.SUPABASE_OCR_BUCKET ?? DEFAULT_SUPABASE_BUCKET;
+const INLINE_DOCUMENT_MAX_BYTES = 120_000;
+
+function sanitizeMaybeString(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function extractStorageFromSignedUrl(url: unknown) {
+  if (!url || typeof url !== "string") return {};
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(
+      /\/object\/(?:sign|download)\/([^/]+)\/(.+)$/
+    );
+    if (match) {
+      return {
+        bucket: match[1],
+        path: decodeURIComponent(match[2]),
+      };
+    }
+  } catch (error) {
+    console.warn("Failed to parse storage signed URL", error);
+  }
+  return {};
+}
+
+function resolveStorageLocation(data: FilesUploaded["data"]) {
+  let bucket = sanitizeMaybeString(data.bucket);
+  let storagePath = sanitizeMaybeString(data.storage_path);
+
+  if (!bucket && storagePath && storagePath.includes("/")) {
+    const [maybeBucket, ...rest] = storagePath.split("/");
+    if (rest.length > 0) {
+      bucket = maybeBucket;
+      storagePath = rest.join("/");
+    }
+  }
+
+  const parsed = extractStorageFromSignedUrl(data.gcs_uri);
+  if (!bucket && parsed.bucket) bucket = parsed.bucket;
+  if (!storagePath && parsed.path) storagePath = parsed.path;
+
+  return {
+    bucket: bucket ?? null,
+    storagePath: storagePath ?? null,
+  };
+}
+
+async function safeReturnAndPersistMaybe({
+  step,
+  supabase,
+  quoteId,
+  fileId,
+  document,
+}) {
+  if (!document) {
+    return { document: null, documentRef: null };
+  }
+
+  const payload = JSON.stringify(document);
+  const byteLength = Buffer.byteLength(payload, "utf8");
+
+  if (byteLength <= INLINE_DOCUMENT_MAX_BYTES) {
+    return { document, documentRef: null };
+  }
+
+  const bucket = OCR_DOCUMENT_BUCKET;
+  const objectKey = `ocr/${quoteId}/${fileId}.json`;
+
+  await step.run("persist-ocr-document", async () => {
+    const { error } = await supabase.storage.from(bucket).upload(
+      objectKey,
+      Buffer.from(payload, "utf8"),
+      {
+        contentType: "application/json",
+        upsert: true,
+      }
+    );
+    if (error) throw new Error(error.message);
+  });
+
+  return {
+    document: null,
+    documentRef: `storage://${bucket}/${objectKey}`,
+  };
+}
+
+function isDecoderUnsupported(error: unknown) {
+  const message =
+    typeof error === "string"
+      ? error
+      : error && typeof (error as any).message === "string"
+        ? (error as any).message
+        : null;
+  if (!message) return false;
+  return message.includes("DECODER routines::unsupported");
+}
 
 function getDocumentAiClient(location) {
   const key = location || "us";
@@ -148,8 +253,8 @@ export const ocrDocument = inngest.createFunction(
   { id: "ocr-document" },
   { event: "files/uploaded" },
   async ({ event, step, logger }) => {
-    const { quote_id, file_id, gcs_uri, filename, bytes, mime } =
-      (event as any).data as FilesUploaded["data"];
+    const upload = (event as any).data as FilesUploaded["data"];
+    const { quote_id, file_id, gcs_uri, filename, bytes, mime } = upload;
 
     logger?.info("ocr-document received", { quote_id, file_id });
 
@@ -184,22 +289,47 @@ export const ocrDocument = inngest.createFunction(
       throw Object.assign(new Error(reason), { result: { ok: false, reason } });
     }
 
+    const supabase = sbAdmin();
+    const { bucket, storagePath } = resolveStorageLocation(upload);
+
     const fileBuffer: Buffer = await step.run(
       "download-uploaded-file",
       async () => {
-        const response = await fetch(gcs_uri);
-        if (!response.ok) {
-          throw new Error(
-            `Failed to download file: ${response.status} ${response.statusText}`
-          );
+        if (bucket && storagePath) {
+          const download = await supabase.storage
+            .from(bucket)
+            .download(storagePath);
+          if (!download.error && download.data) {
+            const arrayBuffer = await download.data.arrayBuffer();
+            return Buffer.from(arrayBuffer);
+          }
+          if (download.error) {
+            logger?.warn?.("ocr-document supabase download failed", {
+              quote_id,
+              file_id,
+              bucket,
+              storagePath,
+              error: download.error.message,
+            });
+          }
         }
-        const arrayBuffer = await response.arrayBuffer();
-        return Buffer.from(arrayBuffer);
+
+        if (gcs_uri) {
+          const response = await fetch(gcs_uri);
+          if (!response.ok) {
+            throw new Error(
+              `Failed to download file: ${response.status} ${response.statusText}`
+            );
+          }
+          const arrayBuffer = await response.arrayBuffer();
+          return Buffer.from(arrayBuffer);
+        }
+
+        throw new Error("No download location available for uploaded file");
       }
     );
 
     if (fileBuffer.byteLength > limit) {
-      // TODO: Switch to GCS document processing for larger files.
       const reason = `Downloaded file exceeds ${limit} byte sync processing limit`;
       logger?.error("ocr-document file exceeds limit after download", {
         quote_id,
@@ -226,16 +356,89 @@ export const ocrDocument = inngest.createFunction(
     }
 
     const processorName = `projects/${projectId}/locations/${location}/processors/${processorId}`;
+    const mimeType = mime || "application/pdf";
 
-    const [processResponse] = await step.run("documentai-process", async () =>
-      client.processDocument({
-        name: processorName,
-        rawDocument: {
-          content: fileBuffer.toString("base64"),
-          mimeType: mime || "application/octet-stream",
-        },
-      })
-    );
+    const invokeDocumentAi = async (buffer: Buffer, label: string) => {
+      const [response] = await step.run(label, async () =>
+        client.processDocument({
+          name: processorName,
+          rawDocument: {
+            content: buffer,
+            mimeType,
+          },
+        })
+      );
+      return response;
+    };
+
+    let processResponse;
+    let activeBuffer = fileBuffer;
+
+    try {
+      processResponse = await invokeDocumentAi(activeBuffer, "documentai-process");
+    } catch (error) {
+      if (isDecoderUnsupported(error) && (!mime || mime.includes("pdf"))) {
+        logger?.warn?.("ocr-document retrying with pdf-lib resave", {
+          quote_id,
+          file_id,
+        });
+        const repairedBuffer: Buffer = await step.run(
+          "documentai-pdf-resave",
+          async () => {
+            const moduleName = ["pdf", "-lib"].join("");
+            let PDFDocument;
+            try {
+              ({ PDFDocument } = await import(moduleName));
+            } catch (importError) {
+              const reason =
+                importError instanceof Error
+                  ? importError.message
+                  : "Failed to load pdf-lib";
+              logger?.error("ocr-document pdf-lib resave unavailable", {
+                quote_id,
+                file_id,
+                reason,
+              });
+              throw Object.assign(new Error(reason), {
+                result: { ok: false, reason },
+              });
+            }
+            const pdf = await PDFDocument.load(activeBuffer);
+            const resaved = await pdf.save();
+            return Buffer.from(resaved);
+          }
+        );
+        activeBuffer = repairedBuffer;
+        try {
+          processResponse = await invokeDocumentAi(
+            activeBuffer,
+            "documentai-process-retry"
+          );
+        } catch (retryError) {
+          const reason =
+            retryError instanceof Error
+              ? retryError.message
+              : "Document AI retry failed";
+          logger?.error("ocr-document Document AI retry failed", {
+            quote_id,
+            file_id,
+            reason,
+          });
+          throw Object.assign(new Error(reason), { result: { ok: false, reason } });
+        }
+      } else {
+        const reason =
+          error instanceof Error
+            ? error.message
+            : "Document AI processing failed";
+        logger?.error("ocr-document Document AI failure", {
+          quote_id,
+          file_id,
+          reason,
+        });
+        throw Object.assign(new Error(reason), { result: { ok: false, reason } });
+      }
+    }
 
     const document = processResponse?.document ?? {};
     const pages = Array.isArray(document.pages) ? document.pages : [];
@@ -294,7 +497,6 @@ export const ocrDocument = inngest.createFunction(
       .sort((a, b) => b[1] - a[1])
       .map(([code]) => code)[0] ?? null;
 
-    const supabase = sbAdmin();
     await step.run("quote-files-upsert", async () => {
       const { error } = await supabase
         .from("quote_files")
@@ -317,6 +519,15 @@ export const ocrDocument = inngest.createFunction(
       if (error) throw new Error(error.message);
     });
 
+    const { document: inlineDocument, documentRef } =
+      await safeReturnAndPersistMaybe({
+        step,
+        supabase,
+        quoteId: quote_id,
+        fileId: file_id,
+        document,
+      });
+
     await step.sendEvent("emit-ocr-complete", {
       name: "files/ocr-complete",
       data: {
@@ -325,6 +536,7 @@ export const ocrDocument = inngest.createFunction(
         page_count: pageCount,
         avg_confidence: normalizedConfidence,
         languages,
+        document_ref: documentRef,
       },
     });
 
@@ -339,6 +551,9 @@ export const ocrDocument = inngest.createFunction(
       page_count: pageCount,
       words,
       avg_confidence: normalizedConfidence,
+      languages,
+      document_ref: documentRef,
+      document: inlineDocument,
     };
   }
 );
@@ -536,7 +751,5 @@ export const functions = [
   geminiAnalyze,
   computePricing,
   quoteCreatedPrepareJobs,
-  cethosCompositePricingShim, // TEMP: remove after caller is fixed
-  echoFilesUploaded,
-  processUpload,
+  cethosCompositePricingShim,
 ];
