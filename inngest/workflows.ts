@@ -252,3 +252,6 @@ export const ocrDocument = inngest.createFunction(
     };
   }
 );
+
+// expose all workflow functions for the Inngest HTTP route (imported as )
+export const functions = [ocrDocument];
