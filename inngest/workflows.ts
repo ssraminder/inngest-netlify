@@ -536,7 +536,7 @@ export const functions = [
   geminiAnalyze,
   computePricing,
   quoteCreatedPrepareJobs,
-  cethosCompositePricingShim, // TEMP: remove after caller is fixed
-  echoFilesUploaded,
-  processUpload,
+  cethosCompositePricingShim,
+  echoFilesUploaded, // stub if present
+  processUpload, // stub if present
 ];

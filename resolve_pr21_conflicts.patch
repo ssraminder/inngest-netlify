@@ -1,0 +1,15 @@
+diff --git a/inngest/workflows.ts b/inngest/workflows.ts
+index da1869a..0bceeac 100644
+--- a/inngest/workflows.ts
++++ b/inngest/workflows.ts
+@@ -536,7 +536,7 @@ export const functions = [
+   geminiAnalyze,
+   computePricing,
+   quoteCreatedPrepareJobs,
+-  cethosCompositePricingShim, // TEMP: remove after caller is fixed
+-  echoFilesUploaded,
+-  processUpload,
++  cethosCompositePricingShim,
++  echoFilesUploaded, // stub if present
++  processUpload, // stub if present
+ ];
