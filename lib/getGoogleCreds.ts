@@ -8,18 +8,7 @@ function parseJson(source: string, label: string): JWTInput {
   }
 }
 
-export function getGoogleCreds(): JWTInput | undefined {
-  const json = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-  if (json && json.trim()) {
-    return parseJson(json, "GOOGLE_APPLICATION_CREDENTIALS_JSON");
-  }
-
-  const b64 = process.env.GOOGLE_APPLICATION_CREDENTIALS_B64;
-  if (b64 && b64.trim()) {
-    const decoded = Buffer.from(b64, "base64").toString("utf8");
-    return parseJson(decoded, "GOOGLE_APPLICATION_CREDENTIALS_B64");
-  }
-
+export function getGoogleCreds(): JWTInput {
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
   const privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
@@ -30,5 +19,18 @@ export function getGoogleCreds(): JWTInput | undefined {
     };
   }
 
-  return undefined;
+  const b64 = process.env.GOOGLE_APPLICATION_CREDENTIALS_B64;
+  if (b64 && b64.trim()) {
+    const decoded = Buffer.from(b64, "base64").toString("utf8");
+    return parseJson(decoded, "GOOGLE_APPLICATION_CREDENTIALS_B64");
+  }
+
+  const json = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  if (json && json.trim()) {
+    return parseJson(json, "GOOGLE_APPLICATION_CREDENTIALS_JSON");
+  }
+
+  throw new Error(
+    "Missing Google credentials. Provide GOOGLE_CLIENT_EMAIL/GOOGLE_PRIVATE_KEY or GOOGLE_APPLICATION_CREDENTIALS_B64 or GOOGLE_APPLICATION_CREDENTIALS_JSON"
+  );
 }
