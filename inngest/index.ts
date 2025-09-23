@@ -1,5 +1,6 @@
 /**
  * inngest/index.ts
+ *
  * Collect likely Inngest function objects without invoking getConfig at build time.
  * Strategy:
  *  - Collect exports from /inngest/functions and from ./workflows (prefer explicit workflows.functions).
