@@ -1,24 +1,18 @@
-// inngest/index.ts
-// Consolidate all function exports (from /inngest/functions/* AND /inngest/workflows.ts)
-// into a single `functions` array that the /api/inngest route can import.
+/**
+ * inngest/index.ts
+ * Consolidate runtime function objects from /inngest/functions/* and /inngest/workflows.ts
+ * Only export items that look like Inngest function objects (they expose getConfig()).
+ */
 
 import * as fnFiles from "./functions";
 import * as workflows from "./workflows";
 
-/**
- * Collect runtime function objects from the functions folder.
- * Each file should export a function object returned by `inngest.createFunction(...)`.
- */
-const fileFns = Object.values(fnFiles).filter(Boolean) as any[];
+function isInngestFunction(v: any): boolean {
+  return !!v && typeof v.getConfig === "function";
+}
 
-/**
- * Collect exported items from workflows (ocrDocument, geminiAnalyze, computePricing, etc.)
- * They are also expected to be the function objects created with `inngest.createFunction`.
- */
-const workflowFns = Object.values(workflows).filter(Boolean) as any[];
+const fileFns = Object.values(fnFiles).filter(isInngestFunction) as any[];
+const workflowFns = Object.values(workflows).filter(isInngestFunction) as any[];
 
-/**
- * Final combined array. Order matters only if you rely on a shim that invokes another function.
- * Place fileFns first, then workflowFns so explicit workflows (ocr, compute-pricing, gemini) are present.
- */
+// Export combined list — order: fileFns then workflowFns
 export const functions = [...fileFns, ...workflowFns];
